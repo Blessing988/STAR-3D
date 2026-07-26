@@ -79,6 +79,8 @@ PhysicalAI_Track1/
   tests/                       Unit tests for geometry, fusion, tracking, and format logic
 
 ECCV_AICity26_Track1.pdf        Final workshop paper
+Star-3D.pdf                     STAR-3D paper copy
+track1.pdf                      Track 1 paper copy
 ```
 
 Large generated assets, datasets, checkpoints, submission zips, and cloned
@@ -260,11 +262,11 @@ the global BEV coordinate system.
 
 ## Paper
 
-The final ECCV AI City workshop paper is included as:
+The final ECCV AI City workshop paper and companion copies are included here:
 
-```text
-ECCV_AICity26_Track1.pdf
-```
+- [`ECCV_AICity26_Track1.pdf`](ECCV_AICity26_Track1.pdf)
+- [`Star-3D.pdf`](Star-3D.pdf)
+- [`track1.pdf`](track1.pdf)
 
 When citing this work, use the citation entry in
 [`CITATION.cff`](CITATION.cff). The final BibTeX entry can be updated after the
