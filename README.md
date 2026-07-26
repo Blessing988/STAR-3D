@@ -104,11 +104,48 @@ have different CUDA and compiler requirements.
 
 ## Dataset Setup
 
-Download AI City Challenge 2026 Track 1 data according to the official challenge
-instructions. Then set:
+Download the dataset from the NVIDIA PhysicalAI Smart Spaces Hugging Face
+repository:
+
+- Dataset card:
+  <https://huggingface.co/datasets/nvidia/PhysicalAI-SmartSpaces/blob/main/README.md>
+- 2026 train split:
+  <https://huggingface.co/datasets/nvidia/PhysicalAI-SmartSpaces/tree/main/MTMC_Tracking_2026/train>
+- 2026 validation split:
+  <https://huggingface.co/datasets/nvidia/PhysicalAI-SmartSpaces/tree/main/MTMC_Tracking_2026/val>
+- 2026 test split:
+  <https://huggingface.co/datasets/nvidia/PhysicalAI-SmartSpaces/tree/main/MTMC_Tracking_2026/test>
+
+The full repository is large because it includes depth maps. For the RGB-only
+STAR-3D pipeline, download at least the 2026 RGB videos, calibration files, and
+train/validation annotations:
 
 ```bash
+pip install -U huggingface_hub
+
 export PHYSICALAI_DATA_ROOT=/path/to/PhysicalAI-SmartSpaces
+
+hf download nvidia/PhysicalAI-SmartSpaces \
+  --repo-type dataset \
+  --include "MTMC_Tracking_2026/train/**" \
+  --include "MTMC_Tracking_2026/val/**" \
+  --include "MTMC_Tracking_2026/test/**" \
+  --local-dir "$PHYSICALAI_DATA_ROOT"
+```
+
+If disk space is limited, omit `depth_maps/` with an exclude rule:
+
+```bash
+hf download nvidia/PhysicalAI-SmartSpaces \
+  --repo-type dataset \
+  --include "MTMC_Tracking_2026/**" \
+  --exclude "MTMC_Tracking_2026/**/depth_maps/**" \
+  --local-dir "$PHYSICALAI_DATA_ROOT"
+```
+
+Then set:
+
+```bash
 export STAR3D_SCRATCH=/path/to/scratch/PhysicalAI_Track1
 ```
 
@@ -117,13 +154,33 @@ Expected dataset layout:
 ```text
 $PHYSICALAI_DATA_ROOT/
   MTMC_Tracking_2026/
-    train/Warehouse_000/...
-    val/Warehouse_020/...
-    test/Warehouse_023/...
+    train/
+      Warehouse_000/
+      ...
+      Warehouse_019/
+    val/
+      Warehouse_020/
+      Warehouse_021/
+      Warehouse_022/
+    test/
+      Warehouse_023/
+      ...
+      Warehouse_027/
 ```
 
-The code assumes each scene provides `calibration.json`, RGB videos, and
-train/val `ground_truth.json`. Test scenes provide videos and calibration only.
+Each synthetic train/validation scene follows the 2025/2026 dataset schema:
+
+```text
+Warehouse_xxx/
+  videos/              RGB camera videos, MP4/H.264, 1080p at 30 FPS
+  depth_maps/          Optional depth maps, very large
+  ground_truth.json    Train/validation 2D and 3D annotations
+  calibration.json     Camera intrinsics, extrinsics, camera matrix, homography
+  map.png              Top-down scene map
+```
+
+Test scenes provide videos and calibration for inference. Ground truth is not
+used by the submission pipeline.
 
 ## Quick Smoke Test
 

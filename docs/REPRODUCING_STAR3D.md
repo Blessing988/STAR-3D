@@ -30,11 +30,33 @@ qsub scripts/pbs/setup_vdetr_env.pbs
 
 ## 2. Dataset
 
-Download AI City Challenge 2026 Track 1 data from the official challenge page.
+Download AI City Challenge 2026 Track 1 data from the NVIDIA PhysicalAI Smart
+Spaces Hugging Face repository:
+
+- Dataset card:
+  <https://huggingface.co/datasets/nvidia/PhysicalAI-SmartSpaces/blob/main/README.md>
+- Train:
+  <https://huggingface.co/datasets/nvidia/PhysicalAI-SmartSpaces/tree/main/MTMC_Tracking_2026/train>
+- Validation:
+  <https://huggingface.co/datasets/nvidia/PhysicalAI-SmartSpaces/tree/main/MTMC_Tracking_2026/val>
+
+Recommended RGB-only download:
+
+```bash
+pip install -U huggingface_hub
+
+export PHYSICALAI_DATA_ROOT=/path/to/PhysicalAI-SmartSpaces
+
+hf download nvidia/PhysicalAI-SmartSpaces \
+  --repo-type dataset \
+  --include "MTMC_Tracking_2026/**" \
+  --exclude "MTMC_Tracking_2026/**/depth_maps/**" \
+  --local-dir "$PHYSICALAI_DATA_ROOT"
+```
+
 Set paths:
 
 ```bash
-export PHYSICALAI_DATA_ROOT=/path/to/PhysicalAI-SmartSpaces
 export STAR3D_SCRATCH=/path/to/scratch/PhysicalAI_Track1
 ```
 
@@ -42,13 +64,14 @@ Expected layout:
 
 ```text
 $PHYSICALAI_DATA_ROOT/MTMC_Tracking_2026/
-  train/Warehouse_000/
-  val/Warehouse_020/
-  test/Warehouse_023/
+  train/Warehouse_000/ ... Warehouse_019/
+  val/Warehouse_020/ ... Warehouse_022/
+  test/Warehouse_023/ ... Warehouse_027/
 ```
 
-Train and validation scenes must include `ground_truth.json` and
-`calibration.json`. Test scenes only need videos and calibration.
+Train and validation scenes must include `videos/`, `ground_truth.json`,
+`calibration.json`, and `map.png`; `depth_maps/` are optional for the RGB-only
+pipeline. Test scenes need videos and calibration for inference.
 
 ## 3. Smoke Tests
 
