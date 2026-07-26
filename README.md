@@ -78,6 +78,7 @@ PhysicalAI_Track1/
   docs/                        Research notes, experiment log, backlog, and paper outline
   tests/                       Unit tests for geometry, fusion, tracking, and format logic
 
+docs/assets/                    README preview images
 ECCV_AICity26_Track1.pdf        Final workshop paper
 Star-3D.pdf                     STAR-3D paper copy
 track1.pdf                      Track 1 paper copy
@@ -267,6 +268,20 @@ The final ECCV AI City workshop paper and companion copies are included here:
 - [`ECCV_AICity26_Track1.pdf`](ECCV_AICity26_Track1.pdf)
 - [`Star-3D.pdf`](Star-3D.pdf)
 - [`track1.pdf`](track1.pdf)
+
+Click each preview to open the corresponding PDF.
+
+<p align="center">
+  <a href="Star-3D.pdf">
+    <img src="docs/assets/star-3d-preview.png" alt="STAR-3D paper preview" width="780">
+  </a>
+</p>
+
+<p align="center">
+  <a href="track1.pdf">
+    <img src="docs/assets/track1-preview.png" alt="Track 1 paper preview" width="780">
+  </a>
+</p>
 
 When citing this work, use the citation entry in
 [`CITATION.cff`](CITATION.cff). The final BibTeX entry can be updated after the
