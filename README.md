@@ -2,7 +2,7 @@
 
 **Association-Preserving RGB-Only Multi-Camera 3D Tracking under Sim2Real Shift**
 
-This repository contains the code, experiment scripts, and paper assets for our
+This repository contains the code, experiment scripts, and final paper PDF for our
 AI City Challenge 2026 Track 1 system. Track 1 evaluates multi-camera 3D
 perception in calibrated smart spaces: given synchronized RGB videos and camera
 calibration, the system must produce global 3D bounding boxes and persistent
@@ -78,11 +78,7 @@ PhysicalAI_Track1/
   docs/                        Research notes, experiment log, backlog, and paper outline
   tests/                       Unit tests for geometry, fusion, tracking, and format logic
 
-eccv_paper/
-  paper-template-Latest/ECCV-paper-template/
-    main.tex                   ECCV workshop paper source
-    main.bib                   Bibliography
-    figures/                   Paper figures generated from the STAR-3D outputs
+ECCV_AICity26_Track1.pdf        Final workshop paper
 ```
 
 Large generated assets, datasets, checkpoints, submission zips, and cloned
@@ -207,10 +203,10 @@ the global BEV coordinate system.
 
 ## Paper
 
-The ECCV workshop paper source is in:
+The final ECCV AI City workshop paper is included as:
 
 ```text
-eccv_paper/paper-template-Latest/ECCV-paper-template/main.tex
+ECCV_AICity26_Track1.pdf
 ```
 
 When citing this work, use the citation entry in

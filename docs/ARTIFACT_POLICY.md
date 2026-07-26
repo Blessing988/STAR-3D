@@ -10,8 +10,7 @@ does not store large data or private cluster outputs.
 - PBS templates under `PhysicalAI_Track1/scripts/pbs/`.
 - Configuration files under `PhysicalAI_Track1/configs/`.
 - Documentation and experiment logs under `PhysicalAI_Track1/docs/`.
-- ECCV paper source and final paper figures under
-  `eccv_paper/paper-template-Latest/ECCV-paper-template/`.
+- Final paper PDF at `ECCV_AICity26_Track1.pdf`.
 
 ## Not Tracked
 
@@ -23,6 +22,7 @@ does not store large data or private cluster outputs.
 - Large report folders.
 - Cloned third-party repositories.
 - Scheduler stdout/stderr logs.
+- Draft paper notes and LaTeX build/source folders.
 
 ## Recommended Release Layout
 

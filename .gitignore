@@ -81,6 +81,8 @@ models/
 # Generated local reports and temporary paper assets
 results/
 submissions/
+paper/
+eccv_paper/
 competition_details.txt
 download_track3_data.pbs
 depth_pro_sample_*.png
