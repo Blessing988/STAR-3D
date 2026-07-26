@@ -1,0 +1,36 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_VDETR_PrepInfer
+#PBS -l select=1:mem=32gb:ncpus=4
+#PBS -l walltime=12:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+SRC_PCD="${SRC_PCD:?Submit with -v SRC_PCD=/path/to/split/pcd}"
+OUT_ROOT="${OUT_ROOT:?Submit with -v OUT_ROOT=/path/to/vdetr_infer_root}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/vdetr}"
+
+mkdir -p "$OUT_ROOT/val/pcd" "$OUT_ROOT/val/gt" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+echo "src_pcd=$SRC_PCD"
+echo "out_root=$OUT_ROOT"
+date
+
+count=0
+find "$SRC_PCD" -maxdepth 1 -type f -name '*.ply' -print0 | while IFS= read -r -d '' ply; do
+  name="$(basename "$ply")"
+  ln -sfn "$ply" "$OUT_ROOT/val/pcd/$name"
+  : > "$OUT_ROOT/val/gt/${name%.ply}.txt"
+  count=$((count + 1))
+  if (( count % 1000 == 0 )); then
+    echo "prepared=$count"
+  fi
+done
+
+echo "pcd_count=$(find "$OUT_ROOT/val/pcd" -maxdepth 1 -type l -name '*.ply' | wc -l)"
+echo "gt_count=$(find "$OUT_ROOT/val/gt" -maxdepth 1 -type f -name '*.txt' | wc -l)"
+date

@@ -1,0 +1,34 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_STAR_Geom_Val
+#PBS -l select=1:mem=100gb:ncpus=12
+#PBS -l walltime=08:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/star}"
+
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+export RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/star_geometry_val/${PBS_JOBID:-manual}}"
+
+date
+hostname
+echo "project_root=$PROJECT_ROOT"
+echo "run_dir=$RUN_DIR"
+
+bash scripts/run_star_geometry_val.sh
+
+date

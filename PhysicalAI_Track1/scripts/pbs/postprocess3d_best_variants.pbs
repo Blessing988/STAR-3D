@@ -1,0 +1,62 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Post3D_Best
+#PBS -l select=1:mem=32gb:ncpus=4
+#PBS -l walltime=02:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_DIR=/path/to/PhysicalAI_Track1
+SCRATCH_DIR=/path/to/scratch/PhysicalAI_Track1
+RUN_ROOT="${SCRATCH_DIR}/runs/submissions"
+INPUT_ZIP="${INPUT_ZIP:-${RUN_ROOT}/test_yolo40e_dfine_precision025_adaptive_score090/track1.zip}"
+RUN_NAME="${RUN_NAME:-test_yolo40e_dfine_p025_post3d_priors}"
+INTERP_GAP="${INTERP_GAP:-0}"
+SIZE_STRENGTH="${SIZE_STRENGTH:-0.35}"
+Z_STRENGTH="${Z_STRENGTH:-0.50}"
+YAW_ALPHA="${YAW_ALPHA:-0.75}"
+VEL_YAW_ALPHA="${VEL_YAW_ALPHA:-0.35}"
+CLASS_SIZE_STRENGTHS="${CLASS_SIZE_STRENGTHS:-0:0.15,1:0.45,2:0.55,3:0.50,4:0.20,5:0.20,6:0.50}"
+CLASS_Z_STRENGTHS="${CLASS_Z_STRENGTHS:-0:0.65,1:0.45,2:0.60,3:0.55,4:0.65,5:0.65,6:0.55}"
+PRIORS="${PRIORS:-${SCRATCH_DIR}/reports/priors_2026_train.json}"
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate /path/to/conda_envs/physicalai_track1_detector
+cd "$PROJECT_DIR"
+export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH:-}"
+
+OUT_DIR="${RUN_ROOT}/${RUN_NAME}"
+WORK_DIR="${OUT_DIR}/work"
+mkdir -p "$WORK_DIR"
+rm -f "${WORK_DIR}/track1.txt"
+unzip -p "$INPUT_ZIP" track1.txt > "${WORK_DIR}/track1.txt"
+
+if [ ! -f "$PRIORS" ]; then
+  python -m physicalai_track1 build-priors \
+    --data-root /path/to/PhysicalAI-SmartSpaces \
+    --year 2026 \
+    --split train \
+    --out "$PRIORS"
+fi
+
+python -m physicalai_track1 postprocess-3d \
+  --input "${WORK_DIR}/track1.txt" \
+  --out "${OUT_DIR}/track1.txt" \
+  --priors "$PRIORS" \
+  --size-strength "$SIZE_STRENGTH" \
+  --z-strength "$Z_STRENGTH" \
+  --class-size-strengths "$CLASS_SIZE_STRENGTHS" \
+  --class-z-strengths "$CLASS_Z_STRENGTHS" \
+  --yaw-alpha "$YAW_ALPHA" \
+  --velocity-yaw-alpha "$VEL_YAW_ALPHA" \
+  --interpolate-max-gap-frames "$INTERP_GAP" \
+  --interpolate-min-track-length 3 \
+  --interpolate-max-step-distance-m 0.75 \
+  --decimals 2
+
+python -m physicalai_track1 validate --submission "${OUT_DIR}/track1.txt"
+cd "$OUT_DIR"
+zip -q -j track1.zip track1.txt
+ls -lh track1.txt track1.zip track1.txt.json

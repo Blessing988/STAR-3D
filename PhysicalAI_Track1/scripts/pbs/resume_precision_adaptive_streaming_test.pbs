@@ -1,0 +1,116 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_StreamFuse_Test
+#PBS -l select=1:mem=220gb:ncpus=16:ngpus=1
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+SOURCE_RUN="${SOURCE_RUN:-test_ensemble_precision_adaptive_online}"
+SOURCE_DIR="${SOURCE_DIR:-$SCRATCH_ROOT/runs/submissions/$SOURCE_RUN}"
+SOURCE_LIFTED="${SOURCE_LIFTED:-$SOURCE_DIR/star/lifted.tsv}"
+RUN_NAME="${RUN_NAME:-test_ensemble_precision_adaptive_online_streaming}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+SORT_TMP_DIR="${SORT_TMP_DIR:-$RUN_DIR/sort_tmp}"
+
+FUSE_DISTANCE_M="${FUSE_DISTANCE_M:-1.35}"
+FUSE_CLASS_DISTANCE_M="${FUSE_CLASS_DISTANCE_M:-0:1.2,1:2.0,6:2.5}"
+FUSE_MIN_SOURCES="${FUSE_MIN_SOURCES:-1}"
+FUSE_MERGE_IOU="${FUSE_MERGE_IOU:-0.08}"
+FUSE_NMS_IOU="${FUSE_NMS_IOU:-0.35}"
+FUSE_NMS_DISTANCE_M="${FUSE_NMS_DISTANCE_M:-0.25}"
+FUSE_SINGLE_CAMERA_SCORE_FACTOR="${FUSE_SINGLE_CAMERA_SCORE_FACTOR:-0.92}"
+
+TRACK_CLASS_MIN_SCORES="${TRACK_CLASS_MIN_SCORES:-0:0.75,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62}"
+TRACK_CLASS_MAX_DISTANCES_M="${TRACK_CLASS_MAX_DISTANCES_M:-0:1.45,1:2.35,2:2.00,3:2.40,4:2.10,5:1.85,6:2.30}"
+TRACK_CLASS_MAX_COSTS="${TRACK_CLASS_MAX_COSTS:-0:1.05,1:1.22,2:1.15,3:1.22,4:1.18,5:1.12,6:1.20}"
+TRACK_CLASS_MAX_AGES="${TRACK_CLASS_MAX_AGES:-0:45,1:75,2:65,3:75,4:65,5:55,6:70}"
+TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M="${TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M:-0:0.45,1:0.90,2:0.75,3:0.90,4:0.75,5:0.65,6:0.85}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR" "$SORT_TMP_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "source_lifted=$SOURCE_LIFTED"
+echo "run_dir=$RUN_DIR"
+
+if [[ ! -s "$SOURCE_LIFTED" ]]; then
+  echo "Missing source lifted TSV: $SOURCE_LIFTED" >&2
+  exit 2
+fi
+
+SORTED_LIFTED="$RUN_DIR/lifted.sorted.tsv"
+if [[ ! -s "$SORTED_LIFTED" ]]; then
+  echo "Sorting lifted candidates by scene_id, frame_id, class_id"
+  {
+    head -1 "$SOURCE_LIFTED"
+    tail -n +2 "$SOURCE_LIFTED" | sort -T "$SORT_TMP_DIR" -S 70% -t $'\t' -k1,1n -k2,2n -k3,3n
+  } > "$SORTED_LIFTED.tmp"
+  mv "$SORTED_LIFTED.tmp" "$SORTED_LIFTED"
+fi
+ls -lh "$SORTED_LIFTED"
+
+python -m physicalai_track1 fuse-3d \
+  --lifted "$SORTED_LIFTED" \
+  --distance-m "$FUSE_DISTANCE_M" \
+  --class-distance-m "$FUSE_CLASS_DISTANCE_M" \
+  --min-sources "$FUSE_MIN_SOURCES" \
+  --merge-iou "$FUSE_MERGE_IOU" \
+  --nms-iou "$FUSE_NMS_IOU" \
+  --nms-distance-m "$FUSE_NMS_DISTANCE_M" \
+  --single-camera-score-factor "$FUSE_SINGLE_CAMERA_SCORE_FACTOR" \
+  --streaming-sorted \
+  --out "$RUN_DIR/fused.tsv" > "$RUN_DIR/fuse.json"
+cat "$RUN_DIR/fuse.json"
+
+python -m physicalai_track1 track-online \
+  --fused "$RUN_DIR/fused.tsv" \
+  --class-min-scores "$TRACK_CLASS_MIN_SCORES" \
+  --min-score 0.0 \
+  --max-cost 1.10 \
+  --max-distance-m 1.60 \
+  --max-age 45 \
+  --class-max-distances-m "$TRACK_CLASS_MAX_DISTANCES_M" \
+  --class-max-costs "$TRACK_CLASS_MAX_COSTS" \
+  --class-max-ages "$TRACK_CLASS_MAX_AGES" \
+  --distance-weight 1.0 \
+  --iou-weight 0.35 \
+  --yaw-weight 0.08 \
+  --score-weight 0.18 \
+  --source-weight 0.12 \
+  --position-alpha 0.85 \
+  --velocity-alpha 0.70 \
+  --confirmation-hits 1 \
+  --confirmation-mode confirmed_only \
+  --class-confirmation-hits "0:2" \
+  --class-duplicate-birth-distances-m "$TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M" \
+  --duplicate-birth-iou 0.05 \
+  --class-immediate-birth-scores "0:0.90" \
+  --decimals 2 \
+  --out "$RUN_DIR/track1_raw.txt" > "$RUN_DIR/track.json"
+
+python scripts/remap_submission_ids.py \
+  --input "$RUN_DIR/track1_raw.txt" \
+  --output "$RUN_DIR/track1.txt"
+python -m physicalai_track1 validate --submission "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_validate.json"
+python scripts/audit_track1_submission.py "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_audit.txt"
+(cd "$RUN_DIR" && rm -f track1.zip && zip -j -q track1.zip track1.txt)
+
+echo "streaming_submission=$RUN_DIR/track1.zip"
+cat "$RUN_DIR/submission_validate.json"
+cat "$RUN_DIR/submission_audit.txt"
+ls -lh "$RUN_DIR/fused.tsv" "$RUN_DIR/track1.txt" "$RUN_DIR/track1.zip"
+date

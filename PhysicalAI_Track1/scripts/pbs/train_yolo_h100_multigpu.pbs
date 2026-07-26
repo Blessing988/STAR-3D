@@ -1,0 +1,209 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_YOLO_2xH100
+#PBS -l select=1:mem=320gb:ncpus=32:ngpus=2:host=gpu0063
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_YAML="${DATA_YAML:-$SCRATCH_ROOT/datasets/yolo_2026_stride30/aicity_track1_2026_class_balanced.yaml}"
+MODEL="${MODEL:-yolo26x.pt}"
+IMGSZ="${IMGSZ:-1536}"
+EPOCHS="${EPOCHS:-40}"
+TIME="${TIME:-0}"
+BATCH="${BATCH:-32}"
+RUN_NAME="${RUN_NAME:-yolo26x_1536_2xh100_stride30_class_balanced}"
+RUNS_ROOT="${RUNS_ROOT:-$SCRATCH_ROOT/runs/detector}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/detector}"
+PATIENCE="${PATIENCE:-12}"
+SAVE_PERIOD="${SAVE_PERIOD:-5}"
+CLOSE_MOSAIC="${CLOSE_MOSAIC:-10}"
+WORKERS="${WORKERS:-16}"
+DEVICES="${DEVICES:-auto}"
+DEVICES="${DEVICES//:/,}"
+RESUME="${RESUME:-false}"
+REQUIRE_GPU_BINDING="${REQUIRE_GPU_BINDING:-true}"
+
+mkdir -p "$LOG_DIR" "$RUNS_ROOT"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+bind_pbs_gpus() {
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    return 0
+  fi
+  if [[ -z "${PBS_GPUFILE:-}" || ! -f "$PBS_GPUFILE" ]]; then
+    return 0
+  fi
+
+  local ids
+  ids="$(
+    while IFS= read -r line; do
+      local token
+      token="${line##*gpu}"
+      if [[ "$token" =~ ^[0-9]+$ ]]; then
+        echo "$token"
+        continue
+      fi
+      token="${line##*nvidia}"
+      if [[ "$token" =~ ^[0-9]+$ ]]; then
+        echo "$token"
+        continue
+      fi
+      token="${line##*[-:[:space:]]}"
+      if [[ "$token" =~ ^[0-9]+$ ]]; then
+        echo "$token"
+      fi
+    done < "$PBS_GPUFILE" | paste -sd, -
+  )"
+
+  if [[ -n "$ids" ]]; then
+    export CUDA_VISIBLE_DEVICES="$ids"
+  fi
+}
+
+resolve_ultralytics_devices() {
+  if [[ "$DEVICES" != "auto" ]]; then
+    return 0
+  fi
+
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" && "$CUDA_VISIBLE_DEVICES" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+    DEVICES="$CUDA_VISIBLE_DEVICES"
+    return 0
+  fi
+
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" && "$CUDA_VISIBLE_DEVICES" == GPU-* ]]; then
+    local rows requested uuid row idx row_uuid resolved found
+    mapfile -t rows < <(nvidia-smi --query-gpu=index,uuid --format=csv,noheader)
+    IFS=',' read -r -a requested <<< "$CUDA_VISIBLE_DEVICES"
+    resolved=""
+
+    for uuid in "${requested[@]}"; do
+      uuid="${uuid//[[:space:]]/}"
+      found=""
+      for row in "${rows[@]}"; do
+        idx="${row%%,*}"
+        row_uuid="${row#*,}"
+        idx="${idx//[[:space:]]/}"
+        row_uuid="${row_uuid//[[:space:]]/}"
+        if [[ "$row_uuid" == "$uuid" ]]; then
+          found="$idx"
+          break
+        fi
+      done
+      if [[ -z "$found" ]]; then
+        echo "ERROR: Could not map CUDA UUID $uuid to a physical GPU index." >&2
+        exit 3
+      fi
+      if [[ -z "$resolved" ]]; then
+        resolved="$found"
+      else
+        resolved="$resolved,$found"
+      fi
+    done
+    DEVICES="$resolved"
+    return 0
+  fi
+
+  DEVICES="$(
+    python - <<'PY'
+import torch
+n = torch.cuda.device_count()
+if n < 1:
+    raise SystemExit("No CUDA devices visible to the job")
+print(",".join(str(i) for i in range(n)))
+PY
+  )"
+}
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+export MKL_THREADING_LAYER=GNU
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
+export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-0}"
+export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}"
+export CUDA_DEVICE_ORDER="${CUDA_DEVICE_ORDER:-PCI_BUS_ID}"
+
+bind_pbs_gpus
+
+echo "job_id=${PBS_JOBID:-unknown}"
+echo "host=$(hostname)"
+echo "project_root=$PROJECT_ROOT"
+echo "data_yaml=$DATA_YAML"
+echo "model=$MODEL"
+echo "run_name=$RUN_NAME"
+echo "epochs=$EPOCHS"
+echo "time=$TIME"
+echo "PBS_GPUFILE=${PBS_GPUFILE:-unset}"
+if [[ -n "${PBS_GPUFILE:-}" && -f "$PBS_GPUFILE" ]]; then
+  echo "pbs_gpufile_contents:"
+  cat "$PBS_GPUFILE"
+fi
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+if [[ "$REQUIRE_GPU_BINDING" == "true" && -z "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+  echo "ERROR: CUDA_VISIBLE_DEVICES is unset and no parseable PBS GPU assignment was found." >&2
+  echo "Refusing to start because this cluster can otherwise place multiple jobs on the same physical GPU." >&2
+  exit 2
+fi
+resolve_ultralytics_devices
+echo "ultralytics_device_arg=$DEVICES"
+echo "NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE"
+echo "NCCL_IB_DISABLE=$NCCL_IB_DISABLE"
+date
+nvidia-smi || true
+
+python - <<'PY'
+import torch
+print("torch", torch.__version__)
+print("cuda_available", torch.cuda.is_available())
+print("device_count", torch.cuda.device_count())
+for i in range(torch.cuda.device_count()):
+    print(f"gpu{i}", torch.cuda.get_device_name(i))
+PY
+
+if [[ "$RESUME" == "true" ]]; then
+  yolo detect train \
+    model="$MODEL" \
+    resume=True \
+    device="$DEVICES" \
+    epochs="$EPOCHS" \
+    time="$TIME"
+else
+  yolo detect train \
+    model="$MODEL" \
+    data="$DATA_YAML" \
+    imgsz="$IMGSZ" \
+    epochs="$EPOCHS" \
+    time="$TIME" \
+    batch="$BATCH" \
+    device="$DEVICES" \
+    workers="$WORKERS" \
+    project="$RUNS_ROOT" \
+    name="$RUN_NAME" \
+    exist_ok=True \
+    pretrained=True \
+    optimizer=auto \
+    cos_lr=True \
+    patience="$PATIENCE" \
+    save_period="$SAVE_PERIOD" \
+    close_mosaic="$CLOSE_MOSAIC" \
+    hsv_h=0.015 \
+    hsv_s=0.55 \
+    hsv_v=0.45 \
+    translate=0.08 \
+    scale=0.55 \
+    perspective=0.0005 \
+    fliplr=0.5 \
+    mosaic=1.0 \
+    mixup=0.08 \
+    copy_paste=0.15 \
+    erasing=0.35
+fi

@@ -1,0 +1,87 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_Track_Variants
+#PBS -l select=1:mem=180gb:ncpus=24:ngpus=1
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+SOURCE_RUN="${SOURCE_RUN:-test_prev_best_1536_cli_h100}"
+SOURCE_DIR="${SOURCE_DIR:-$SCRATCH_ROOT/runs/submissions/$SOURCE_RUN}"
+FUSED="${FUSED:-$SOURCE_DIR/star/fused.tsv}"
+RUN_ROOT="${RUN_ROOT:-$SCRATCH_ROOT/runs/submissions/track_variants_${SOURCE_RUN}}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+mkdir -p "$RUN_ROOT" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "fused=$FUSED"
+echo "run_root=$RUN_ROOT"
+
+if [[ ! -s "$FUSED" ]]; then
+  echo "Missing fused detections: $FUSED" >&2
+  exit 2
+fi
+
+run_variant() {
+  local name="$1"
+  local class_scores="$2"
+  local max_cost="$3"
+  local max_distance="$4"
+  local max_age="$5"
+  local out_dir="$RUN_ROOT/$name"
+
+  mkdir -p "$out_dir"
+  echo "=== variant=$name class_scores=$class_scores max_cost=$max_cost max_distance=$max_distance max_age=$max_age"
+
+  python -m physicalai_track1 track-online \
+    --fused "$FUSED" \
+    --class-min-scores "$class_scores" \
+    --min-score 0.0 \
+    --max-cost "$max_cost" \
+    --max-distance-m "$max_distance" \
+    --max-age "$max_age" \
+    --distance-weight 1.0 \
+    --iou-weight 0.35 \
+    --yaw-weight 0.08 \
+    --score-weight 0.18 \
+    --source-weight 0.12 \
+    --position-alpha 0.85 \
+    --velocity-alpha 0.70 \
+    --decimals 2 \
+    --out "$out_dir/track1_raw.txt"
+
+  python scripts/remap_submission_ids.py \
+    --input "$out_dir/track1_raw.txt" \
+    --output "$out_dir/track1.txt"
+
+  python -m physicalai_track1 validate --submission "$out_dir/track1.txt" > "$out_dir/validate.json"
+  python scripts/audit_track1_submission.py "$out_dir/track1.txt" > "$out_dir/audit.txt"
+  (cd "$out_dir" && rm -f track1.zip && zip -j -q track1.zip track1.txt)
+
+  ls -lh "$out_dir/track1.txt" "$out_dir/track1.zip"
+  cat "$out_dir/validate.json"
+  cat "$out_dir/audit.txt"
+}
+
+# The first leaderboard submission only gated classes 0, 1, and 6. These
+# variants gate every class to cut false positives and track fragmentation.
+run_variant "v1_allclass_moderate" "0:0.70,1:0.85,2:0.40,3:0.45,4:0.45,5:0.45,6:0.55" "1.15" "1.70" "45"
+run_variant "v2_allclass_balanced" "0:0.75,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62" "1.10" "1.60" "45"
+run_variant "v3_allclass_precision" "0:0.82,1:0.90,2:0.60,3:0.65,4:0.65,5:0.65,6:0.70" "1.00" "1.45" "35"
+run_variant "v4_person_recall_vehicle_precision" "0:0.65,1:0.90,2:0.55,3:0.60,4:0.60,5:0.60,6:0.68" "1.10" "1.60" "45"
+
+date

@@ -1,0 +1,57 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_DepthObj_Data
+#PBS -l select=1:mem=160gb:ncpus=16
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DEPTH_ROOT="${DEPTH_ROOT:-$SCRATCH_ROOT/depth_estimates/depth_pro_calib_focal_val_stride30_1536}"
+SPLIT="${SPLIT:-val}"
+SCENES="${SCENES:-Warehouse_020 Warehouse_021 Warehouse_022}"
+FRAME_STRIDE="${FRAME_STRIDE:-30}"
+OUT="${OUT:-$SCRATCH_ROOT/datasets/geometry_residual/depthpro_object_${SPLIT}_stride${FRAME_STRIDE}.npz}"
+PRIORS="${PRIORS:-$SCRATCH_ROOT/datasets/geometry_residual/priors_train.json}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/geometry}"
+
+mkdir -p "$(dirname "$OUT")" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "split=$SPLIT"
+echo "scenes=$SCENES"
+echo "depth_root=$DEPTH_ROOT"
+echo "out=$OUT"
+
+python -m physicalai_track1 build-priors \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split train \
+  --out "$PRIORS"
+
+python -m physicalai_track1 build-geometry-dataset \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split "$SPLIT" \
+  --scenes $SCENES \
+  --priors "$PRIORS" \
+  --frame-stride "$FRAME_STRIDE" \
+  --use-depth \
+  --depth-scale 1.0 \
+  --depth-root "$DEPTH_ROOT" \
+  --out "$OUT"
+
+date

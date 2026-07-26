@@ -1,0 +1,60 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_ZIO_PCD
+#PBS -l select=1:mem=160gb:ncpus=16
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-base}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+OUT_DIR="${OUT_DIR:-$SCRATCH_ROOT/datasets/zio_pcd_2026}"
+SPLITS="${SPLITS:-val}"
+SCENES="${SCENES:-}"
+FRAME_STRIDE="${FRAME_STRIDE:-100}"
+MAX_FRAMES="${MAX_FRAMES:-}"
+VOXEL_SIZE="${VOXEL_SIZE:-0.02}"
+PIXEL_STRIDE="${PIXEL_STRIDE:-2}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/zio_pcd}"
+
+mkdir -p "$OUT_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+if [[ "$CONDA_ENV" != "base" ]]; then
+  source activate "$CONDA_ENV"
+fi
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+ARGS=(
+  python scripts/generate_zio_pcd_2026.py
+  --data-root "$DATA_ROOT"
+  --out-dir "$OUT_DIR"
+  --year 2026
+  --splits $SPLITS
+  --frame-stride "$FRAME_STRIDE"
+  --voxel-size "$VOXEL_SIZE"
+  --pixel-stride "$PIXEL_STRIDE"
+)
+if [[ -n "$SCENES" ]]; then
+  ARGS+=(--scenes $SCENES)
+fi
+if [[ -n "$MAX_FRAMES" ]]; then
+  ARGS+=(--max-frames "$MAX_FRAMES")
+fi
+
+echo "out_dir=$OUT_DIR"
+echo "splits=$SPLITS"
+echo "scenes=$SCENES"
+echo "frame_stride=$FRAME_STRIDE"
+echo "max_frames=$MAX_FRAMES"
+echo "pixel_stride=$PIXEL_STRIDE"
+date
+"${ARGS[@]}"
+date

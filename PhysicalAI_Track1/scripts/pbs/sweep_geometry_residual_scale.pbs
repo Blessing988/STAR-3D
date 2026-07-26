@@ -1,0 +1,54 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_GeometryScale
+#PBS -l select=1:mem=100gb:ncpus=12
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+RESIDUAL_MODEL="${RESIDUAL_MODEL:-$SCRATCH_ROOT/runs/geometry_residual/geometry_mlp_stride15.npz}"
+SCALES="${SCALES:-0.0 0.05 0.10 0.25 0.50 1.0}"
+MAX_UNCERTAINTIES="${MAX_UNCERTAINTIES:-none 1.0 2.0 4.0}"
+SCALES="${SCALES//:/ }"
+MAX_UNCERTAINTIES="${MAX_UNCERTAINTIES//:/ }"
+RUN_ROOT="${RUN_ROOT:-$SCRATCH_ROOT/runs/sweeps/geometry_residual_scale}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/geometry}"
+
+mkdir -p "$RUN_ROOT" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+export FRAME_STRIDE=30
+export MAX_FRAMES=600
+export RESIDUAL_MODEL
+
+for scale in $SCALES; do
+  for max_uncertainty in $MAX_UNCERTAINTIES; do
+    if [[ "$scale" == "0.0" && "$max_uncertainty" != "none" ]]; then
+      continue
+    fi
+    tag="scale_${scale//./p}_unc_${max_uncertainty//./p}"
+    export RESIDUAL_SCALE="$scale"
+    export RUN_DIR="$RUN_ROOT/$tag"
+    if [[ "$max_uncertainty" == "none" ]]; then
+      unset RESIDUAL_MAX_UNCERTAINTY
+    else
+      export RESIDUAL_MAX_UNCERTAINTY="$max_uncertainty"
+    fi
+    echo "running $tag"
+    bash scripts/run_star_geometry_val.sh
+  done
+done
+
+python scripts/summarize_residual_scale_sweep.py \
+  --run-root "$RUN_ROOT" \
+  --out "$RUN_ROOT/residual_scale_sweep_results.json"

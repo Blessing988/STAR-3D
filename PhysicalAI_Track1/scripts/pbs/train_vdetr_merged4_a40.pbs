@@ -1,0 +1,24 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_VDETR_Merged4
+#PBS -l select=1:mem=300gb:ncpus=32:ngpus=2:glist=a40
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+export PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+export CONFIG="${CONFIG:-$PROJECT_ROOT/configs/vdetr_aicity2026_merged4_rareweighted.yaml}"
+export DATASET_ROOT="${DATASET_ROOT:-/path/to/scratch/PhysicalAI_Track1/datasets/zio_pcd_2026_slice20_stride100_rarebalanced24k}"
+export CHECKPOINT_DIR="${CHECKPOINT_DIR:-/path/to/scratch/PhysicalAI_Track1/runs/vdetr/aicity2026_merged4_rareweighted24k_e5_a40_2gpu}"
+export EPOCHS="${EPOCHS:-5}"
+export NGPUS="${NGPUS:-2}"
+export BASE_LR="${BASE_LR:-0.000175}"
+export WARM_LR="${WARM_LR:-0.0000025}"
+export FINAL_LR="${FINAL_LR:-0.00000125}"
+export NUM_WORKERS="${NUM_WORKERS:-8}"
+
+cd "$PROJECT_ROOT"
+exec bash scripts/pbs/train_vdetr_aicity2026.pbs

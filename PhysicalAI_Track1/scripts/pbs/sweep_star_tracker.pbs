@@ -1,0 +1,53 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_STAR_TrackerSweep
+#PBS -l select=1:mem=100gb:ncpus=16
+#PBS -l walltime=08:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+FUSED="${FUSED:?Submit with -v FUSED=/path/to/fused.tsv}"
+SCENES="${SCENES:-Warehouse_020 Warehouse_021 Warehouse_022}"
+MAX_FRAMES="${MAX_FRAMES:-600}"
+FRAME_STRIDE="${FRAME_STRIDE:-30}"
+MIN_SCORES="${MIN_SCORES:-0.0 0.05 0.10 0.15 0.20 0.30 0.40 0.50 0.60}"
+MAX_COSTS="${MAX_COSTS:-1.20 1.35}"
+MAX_DISTANCES_M="${MAX_DISTANCES_M:-1.8 2.2}"
+RUN_NAME="${RUN_NAME:-tracker_sweep_${PBS_JOBID:-manual}}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/sweeps/$RUN_NAME}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/sweeps}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "fused=$FUSED"
+echo "run_dir=$RUN_DIR"
+
+python -m physicalai_track1 sweep-tracker \
+  --fused "$FUSED" \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split val \
+  --scenes $SCENES \
+  --max-frames-per-scene "$MAX_FRAMES" \
+  --frame-stride "$FRAME_STRIDE" \
+  --min-scores $MIN_SCORES \
+  --max-costs $MAX_COSTS \
+  --max-distances-m $MAX_DISTANCES_M \
+  --out-dir "$RUN_DIR"
+
+date

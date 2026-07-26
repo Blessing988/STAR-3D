@@ -1,0 +1,29 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Extract_YOLO_Frames
+#PBS -l select=1:mem=100gb:ncpus=12
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+MANIFEST="${MANIFEST:-$SCRATCH_ROOT/datasets/yolo_2026_stride30/train_frames.tsv}"
+OVERWRITE="${OVERWRITE:-0}"
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+if [ "$OVERWRITE" = "1" ]; then
+  python -m physicalai_track1 extract-frames --manifest "$MANIFEST" --overwrite
+else
+  python -m physicalai_track1 extract-frames --manifest "$MANIFEST"
+fi
+
+du -sh "$(dirname "$MANIFEST")" || true

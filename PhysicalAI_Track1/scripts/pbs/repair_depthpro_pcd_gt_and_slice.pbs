@@ -1,0 +1,59 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_DepthPro_Slice
+#PBS -l select=1:mem=160gb:ncpus=16
+#PBS -l walltime=48:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+PCD_ROOT="${PCD_ROOT:-/path/to/scratch/PhysicalAI_Track1/depth_estimates/zio_pcd_depthpro_val_stride30}"
+OUT_DIR="${OUT_DIR:-/path/to/scratch/PhysicalAI_Track1/depth_estimates/zio_pcd_depthpro_val_stride30_sliced}"
+SPLIT="${SPLIT:-val}"
+ENV_PREFIX="${ENV_PREFIX:-/path/to/conda_envs/vdetr_aic2026}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/depth_pro}"
+
+mkdir -p "$LOG_DIR" "$OUT_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+set +u
+source activate "$ENV_PREFIX"
+set -u
+
+cd "$PROJECT_ROOT"
+export PYTHONPATH="$PROJECT_ROOT/src:$PROJECT_ROOT/scripts:${PYTHONPATH:-}"
+
+if [[ "$SPLIT" != "test" ]]; then
+  python scripts/write_zio_gt_for_pcd_stems.py \
+    --data-root "$DATA_ROOT" \
+    --pcd-root "$PCD_ROOT/$SPLIT/pcd" \
+    --out-gt-dir "$PCD_ROOT/$SPLIT/gt" \
+    --split "$SPLIT"
+
+  echo "GT count"
+  find "$PCD_ROOT/$SPLIT/gt" -type f -name "*.txt" | wc -l
+else
+  echo "Skipping GT repair for test split"
+fi
+
+python scripts/slice_zio_pcd_2026.py \
+  --pcd-data-root "$PCD_ROOT" \
+  --out-dir "$OUT_DIR" \
+  --splits "$SPLIT" \
+  --voxel-size 20 \
+  --overlap 0.5 \
+  --min-points 128
+
+echo "Slice PCD count"
+find "$OUT_DIR/$SPLIT/pcd" -type f -name "*.ply" | wc -l
+echo "Slice GT count"
+if [[ -d "$OUT_DIR/$SPLIT/gt" ]]; then
+  find "$OUT_DIR/$SPLIT/gt" -type f -name "*.txt" | wc -l
+else
+  echo 0
+fi

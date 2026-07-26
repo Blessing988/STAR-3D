@@ -1,0 +1,40 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Setup_Detector_Env
+#PBS -l select=1:mem=160gb:ncpus=16:ngpus=1:host=gpu0063
+#PBS -l walltime=08:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+
+if [ ! -d "$CONDA_ENV" ]; then
+  conda create -p "$CONDA_ENV" -y python=3.10 pip numpy scipy pyyaml tqdm
+else
+  echo "Environment already exists: $CONDA_ENV"
+fi
+
+source activate "$CONDA_ENV"
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install opencv-python-headless
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+python -m pip install ultralytics lapx filterpy pycocotools
+python -m pip install -e "$PROJECT_ROOT"
+
+python - <<'PY'
+import torch
+print("torch", torch.__version__)
+print("cuda", torch.cuda.is_available())
+print("device_count", torch.cuda.device_count())
+if torch.cuda.is_available():
+    print("gpu0", torch.cuda.get_device_name(0))
+import ultralytics
+print("ultralytics", ultralytics.__version__)
+PY

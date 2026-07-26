@@ -1,0 +1,23 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Geom_Smoke
+#PBS -l select=1:mem=80gb:ncpus=8
+#PBS -l walltime=02:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+export DATA_ROOT
+
+bash scripts/smoke_geometric_baseline.sh
+

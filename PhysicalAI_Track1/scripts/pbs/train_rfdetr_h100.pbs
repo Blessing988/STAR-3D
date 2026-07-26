@@ -1,0 +1,39 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_RFDETR_L_H100
+#PBS -l select=1:mem=240gb:ncpus=16:ngpus=1:glist=h100:host=gpu0061
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+RFDETR_REPO=/path/to/rf-detr
+PROJECT_DIR=/path/to/PhysicalAI_Track1
+DATASET_DIR=/path/to/scratch/PhysicalAI_Track1/datasets/rfdetr_2026_balanced
+OUTPUT_DIR=/path/to/scratch/PhysicalAI_Track1/runs/rfdetr/rfdetr_l_1008_stride30_balanced_h100
+
+mkdir -p "$OUTPUT_DIR"
+cd "$OUTPUT_DIR"
+source activate /path/to/conda_envs/rfdetr
+
+export PYTHONPATH="$RFDETR_REPO:$PROJECT_DIR:${PYTHONPATH:-}"
+export WANDB_MODE=disabled
+export OMP_NUM_THREADS=8
+export USE_FILE_SYSTEM_SHARING=True
+export TMPDIR=/path/to/scratch/PhysicalAI_Track1/tmp/pip_tmp
+export HF_HOME=/path/to/scratch/PhysicalAI_Track1/tmp/hf_home
+
+python "$PROJECT_DIR/scripts/train_rfdetr_track1.py" \
+  --dataset-dir "$DATASET_DIR" \
+  --output-dir "$OUTPUT_DIR" \
+  --variant large \
+  --epochs 80 \
+  --batch-size 2 \
+  --grad-accum-steps 8 \
+  --resolution 1008 \
+  --lr 1e-4 \
+  --workers 8 \
+  --checkpoint-interval 5 \
+  --early-stopping-patience 12

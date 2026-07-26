@@ -1,0 +1,23 @@
+name: physicalai_track1
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - scipy
+  - pyyaml
+  - tqdm
+  - opencv
+  - pytorch
+  - torchvision
+  - pytorch-cuda=12.1
+  - pip:
+      - ultralytics>=8.3
+      - lapx>=0.5
+      - filterpy>=1.4
+      - pycocotools>=2.0
+

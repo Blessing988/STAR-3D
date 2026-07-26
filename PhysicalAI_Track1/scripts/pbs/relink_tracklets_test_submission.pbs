@@ -1,0 +1,88 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Relink_Test
+#PBS -l select=1:mem=120gb:ncpus=12
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+PRED="${PRED:-$SCRATCH_ROOT/runs/submissions/test_ensemble_yolo_prevbest_dfine_l_h100/track1.txt}"
+RUN_NAME="${RUN_NAME:-relink_test_${PBS_JOBID:-manual}}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+MAX_GAP_FRAMES="${MAX_GAP_FRAMES:-90}"
+MAX_DISTANCE_M="${MAX_DISTANCE_M:-2.0}"
+MAX_COST="${MAX_COST:-1.25}"
+FRAME_STEP="${FRAME_STEP:-30}"
+MIN_TRACKLET_HITS="${MIN_TRACKLET_HITS:-2}"
+DISTANCE_WEIGHT="${DISTANCE_WEIGHT:-1.0}"
+VELOCITY_WEIGHT="${VELOCITY_WEIGHT:-0.20}"
+IOU_WEIGHT="${IOU_WEIGHT:-0.25}"
+YAW_WEIGHT="${YAW_WEIGHT:-0.08}"
+SIZE_WEIGHT="${SIZE_WEIGHT:-0.25}"
+ASSOCIATION_MODEL="${ASSOCIATION_MODEL:-}"
+ASSOCIATION_WEIGHT="${ASSOCIATION_WEIGHT:-0.0}"
+ASSOCIATION_MIN_PROBABILITY="${ASSOCIATION_MIN_PROBABILITY:-}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "pred=$PRED"
+echo "run_dir=$RUN_DIR"
+
+if [[ ! -s "$PRED" ]]; then
+  echo "Missing prediction file: $PRED" >&2
+  exit 2
+fi
+
+ARGS=(python -m physicalai_track1 relink-tracklets
+  --input "$PRED"
+  --out "$RUN_DIR/track1_relinked_raw.txt"
+  --decimals 2
+  --max-gap-frames "$MAX_GAP_FRAMES"
+  --max-distance-m "$MAX_DISTANCE_M"
+  --max-cost "$MAX_COST"
+  --frame-step "$FRAME_STEP"
+  --min-tracklet-hits "$MIN_TRACKLET_HITS"
+  --distance-weight "$DISTANCE_WEIGHT"
+  --velocity-weight "$VELOCITY_WEIGHT"
+  --iou-weight "$IOU_WEIGHT"
+  --yaw-weight "$YAW_WEIGHT"
+  --size-weight "$SIZE_WEIGHT"
+  --association-weight "$ASSOCIATION_WEIGHT")
+if [[ -n "$ASSOCIATION_MODEL" ]]; then
+  ARGS+=(--association-model "$ASSOCIATION_MODEL")
+fi
+if [[ -n "$ASSOCIATION_MIN_PROBABILITY" ]]; then
+  ARGS+=(--association-min-probability "$ASSOCIATION_MIN_PROBABILITY")
+fi
+"${ARGS[@]}"
+
+python scripts/remap_submission_ids.py \
+  --input "$RUN_DIR/track1_relinked_raw.txt" \
+  --output "$RUN_DIR/track1.txt"
+
+python -m physicalai_track1 validate --submission "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_validate.json"
+python scripts/audit_track1_submission.py "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_audit.txt"
+(cd "$RUN_DIR" && rm -f track1.zip && zip -j track1.zip track1.txt)
+
+echo "raw_relinked=$RUN_DIR/track1_relinked_raw.txt"
+echo "official_submission=$RUN_DIR/track1.zip"
+cat "$RUN_DIR/track1_relinked_raw.txt.json"
+cat "$RUN_DIR/submission_validate.json"
+cat "$RUN_DIR/submission_audit.txt"
+date

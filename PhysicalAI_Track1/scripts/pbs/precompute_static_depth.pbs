@@ -1,0 +1,55 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Static_Depth
+#PBS -l select=1:mem=120gb:ncpus=12
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+OUT_ROOT="${OUT_ROOT:-$SCRATCH_ROOT/depth_static_2026}"
+CONDA_ENV="${CONDA_ENV:-base}"
+SPLIT="${SPLIT:-val}"
+SCENES="${SCENES:-}"
+MAX_SAMPLES="${MAX_SAMPLES:-48}"
+SAMPLE_STRIDE="${SAMPLE_STRIDE:-30}"
+METHOD="${METHOD:-median}"
+OVERWRITE="${OVERWRITE:-0}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/depth}"
+
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+if [[ "$CONDA_ENV" != "base" ]]; then
+  source activate "$CONDA_ENV"
+fi
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+ARGS=(python scripts/precompute_static_depth.py
+  --data-root "$DATA_ROOT"
+  --out-root "$OUT_ROOT"
+  --year 2026
+  --split "$SPLIT"
+  --max-samples "$MAX_SAMPLES"
+  --sample-stride "$SAMPLE_STRIDE"
+  --method "$METHOD")
+
+if [[ -n "$SCENES" ]]; then
+  ARGS+=(--scenes $SCENES)
+fi
+if [[ "$OVERWRITE" == "1" ]]; then
+  ARGS+=(--overwrite)
+fi
+
+date
+hostname
+echo "out_root=$OUT_ROOT split=$SPLIT scenes=$SCENES max_samples=$MAX_SAMPLES sample_stride=$SAMPLE_STRIDE method=$METHOD"
+"${ARGS[@]}"
+date

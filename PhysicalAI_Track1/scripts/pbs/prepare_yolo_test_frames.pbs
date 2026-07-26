@@ -1,0 +1,67 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Prepare_Test_Frames
+#PBS -l select=1:mem=120gb:ncpus=16
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+YEAR="${YEAR:-2026}"
+SPLIT="${SPLIT:-test}"
+FRAME_STRIDE="${FRAME_STRIDE:-1}"
+MAX_FRAMES_PER_SCENE="${MAX_FRAMES_PER_SCENE:-}"
+DATASET_DIR="${DATASET_DIR:-$SCRATCH_ROOT/datasets/yolo_${YEAR}_${SPLIT}_stride${FRAME_STRIDE}}"
+SCENES="${SCENES:-}"
+EXTRACT="${EXTRACT:-1}"
+OVERWRITE="${OVERWRITE:-0}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/preprocess}"
+
+mkdir -p "$DATASET_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "data_root=$DATA_ROOT"
+echo "dataset_dir=$DATASET_DIR"
+echo "split=$SPLIT frame_stride=$FRAME_STRIDE max_frames_per_scene=${MAX_FRAMES_PER_SCENE:-none}"
+echo "scenes=${SCENES:-all}"
+
+ARGS=(python -m physicalai_track1 export-frame-manifest
+  --data-root "$DATA_ROOT"
+  --year "$YEAR"
+  --split "$SPLIT"
+  --output-dir "$DATASET_DIR"
+  --frame-stride "$FRAME_STRIDE")
+if [[ -n "$MAX_FRAMES_PER_SCENE" ]]; then
+  ARGS+=(--max-frames-per-scene "$MAX_FRAMES_PER_SCENE")
+fi
+if [[ -n "$SCENES" ]]; then
+  ARGS+=(--scenes $SCENES)
+fi
+"${ARGS[@]}"
+
+MANIFEST="$DATASET_DIR/${SPLIT}_frames.tsv"
+wc -l "$MANIFEST"
+
+if [[ "$EXTRACT" == "1" ]]; then
+  if [[ "$OVERWRITE" == "1" ]]; then
+    python -m physicalai_track1 extract-frames --manifest "$MANIFEST" --overwrite
+  else
+    python -m physicalai_track1 extract-frames --manifest "$MANIFEST"
+  fi
+fi
+
+du -sh "$DATASET_DIR" || true
+date

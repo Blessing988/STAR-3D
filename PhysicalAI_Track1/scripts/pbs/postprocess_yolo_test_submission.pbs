@@ -1,0 +1,69 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_Postprocess_Test
+#PBS -l select=1:mem=250gb:ncpus=32:ngpus=1
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+YEAR="${YEAR:-2026}"
+RUN_NAME="${RUN_NAME:-test_prev_best_1536_cli_h100}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+DETECTIONS="${DETECTIONS:-$RUN_DIR/detections.tsv}"
+SUBMISSION_OUT="${SUBMISSION_OUT:-$RUN_DIR/track1_test_submission.txt}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+FUSE_CLASS_DISTANCE_M="${FUSE_CLASS_DISTANCE_M:-0:1.2,1:2.0,6:2.5}"
+TRACK_CLASS_MIN_SCORES="${TRACK_CLASS_MIN_SCORES:-0:0.6,1:0.8,6:0.4}"
+TRACK_MIN_SCORE="${TRACK_MIN_SCORE:-0.0}"
+TRACK_MAX_COST="${TRACK_MAX_COST:-1.20}"
+TRACK_MAX_DISTANCE_M="${TRACK_MAX_DISTANCE_M:-1.8}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "run_dir=$RUN_DIR"
+echo "detections=$DETECTIONS"
+echo "submission_out=$SUBMISSION_OUT"
+
+if [[ ! -s "$DETECTIONS" ]]; then
+  echo "Missing cached detections: $DETECTIONS" >&2
+  exit 2
+fi
+
+DATA_ROOT="$DATA_ROOT" \
+YEAR="$YEAR" \
+SPLIT=test \
+DO_EVAL=0 \
+DETECTIONS="$DETECTIONS" \
+RUN_DIR="$RUN_DIR/star" \
+FUSE_CLASS_DISTANCE_M="$FUSE_CLASS_DISTANCE_M" \
+TRACK_CLASS_MIN_SCORES="$TRACK_CLASS_MIN_SCORES" \
+TRACK_MIN_SCORE="$TRACK_MIN_SCORE" \
+TRACK_MAX_COST="$TRACK_MAX_COST" \
+TRACK_MAX_DISTANCE_M="$TRACK_MAX_DISTANCE_M" \
+SUBMISSION_DECIMALS=2 \
+bash scripts/run_star_geometry_val.sh
+
+cp "$RUN_DIR/star/track1_star_online.txt" "$SUBMISSION_OUT"
+python -m physicalai_track1 validate --submission "$SUBMISSION_OUT" > "$RUN_DIR/submission_validate.json"
+zip -j "$SUBMISSION_OUT.zip" "$SUBMISSION_OUT" || true
+
+echo "submission=$SUBMISSION_OUT"
+echo "submission_zip=$SUBMISSION_OUT.zip"
+cat "$RUN_DIR/submission_validate.json"
+date

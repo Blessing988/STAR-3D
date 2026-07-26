@@ -1,0 +1,100 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_DepthObj_Test
+#PBS -l select=1:mem=420gb:ncpus=16
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+SOURCE_RUN="${SOURCE_RUN:-test_yolo11x1920_resume_e29_dfine_p025_adaptive_online}"
+DETECTIONS="${DETECTIONS:-$SCRATCH_ROOT/runs/submissions/$SOURCE_RUN/detections_ensemble.tsv}"
+DEPTH_ROOT="${DEPTH_ROOT:-$SCRATCH_ROOT/depth_estimates/depth_pro_calib_focal_test_stride30_1536}"
+RESIDUAL_MODEL="${RESIDUAL_MODEL:-$SCRATCH_ROOT/runs/geometry_residual/depthpro_object_val_stride30.npz}"
+RUN_NAME="${RUN_NAME:-test_yolo11x1920_resume_e29_dfine_p025_depthpro_object_residual_s005}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+RESIDUAL_SCALE="${RESIDUAL_SCALE:-0.05}"
+RESIDUAL_MAX_UNCERTAINTY="${RESIDUAL_MAX_UNCERTAINTY:-1.0}"
+
+FUSE_CLASS_DISTANCE_M="${FUSE_CLASS_DISTANCE_M:-0:1.2,1:2.0,6:2.5}"
+TRACK_CLASS_MIN_SCORES="${TRACK_CLASS_MIN_SCORES:-0:0.75,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62}"
+TRACK_CLASS_MAX_DISTANCES_M="${TRACK_CLASS_MAX_DISTANCES_M:-0:1.45,1:2.35,2:2.00,3:2.40,4:2.10,5:1.85,6:2.30}"
+TRACK_CLASS_MAX_COSTS="${TRACK_CLASS_MAX_COSTS:-0:1.05,1:1.22,2:1.15,3:1.22,4:1.18,5:1.12,6:1.20}"
+TRACK_CLASS_MAX_AGES="${TRACK_CLASS_MAX_AGES:-0:45,1:75,2:65,3:75,4:65,5:55,6:70}"
+TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M="${TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M:-0:0.45,1:0.90,2:0.75,3:0.90,4:0.75,5:0.65,6:0.85}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "detections=$DETECTIONS"
+echo "depth_root=$DEPTH_ROOT"
+echo "residual_model=$RESIDUAL_MODEL"
+echo "run_dir=$RUN_DIR"
+
+if [[ ! -s "$DETECTIONS" ]]; then
+  echo "Missing detections: $DETECTIONS" >&2
+  exit 2
+fi
+if [[ ! -s "$RESIDUAL_MODEL" ]]; then
+  echo "Missing residual model: $RESIDUAL_MODEL" >&2
+  exit 3
+fi
+
+STAR_DIR="$RUN_DIR/star"
+DATA_ROOT="$DATA_ROOT" \
+YEAR=2026 \
+SPLIT=test \
+DO_EVAL=0 \
+DETECTIONS="$DETECTIONS" \
+RUN_DIR="$STAR_DIR" \
+FUSE_CLASS_DISTANCE_M="$FUSE_CLASS_DISTANCE_M" \
+TRACK_CLASS_MIN_SCORES="$TRACK_CLASS_MIN_SCORES" \
+TRACK_CLASS_MAX_DISTANCES_M="$TRACK_CLASS_MAX_DISTANCES_M" \
+TRACK_CLASS_MAX_COSTS="$TRACK_CLASS_MAX_COSTS" \
+TRACK_CLASS_MAX_AGES="$TRACK_CLASS_MAX_AGES" \
+TRACK_MIN_SCORE=0.0 \
+TRACK_MAX_COST=1.10 \
+TRACK_MAX_DISTANCE_M=1.60 \
+TRACK_MAX_AGE=45 \
+TRACK_CONFIRMATION_HITS=1 \
+TRACK_CONFIRMATION_MODE=confirmed_only \
+TRACK_CLASS_CONFIRMATION_HITS="0:2" \
+TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M="$TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M" \
+RESIDUAL_MODEL="$RESIDUAL_MODEL" \
+RESIDUAL_SCALE="$RESIDUAL_SCALE" \
+RESIDUAL_MAX_UNCERTAINTY="$RESIDUAL_MAX_UNCERTAINTY" \
+LIFT_USE_DEPTH=1 \
+LIFT_DEPTH_SCALE=1.0 \
+LIFT_DEPTH_ROOT="$DEPTH_ROOT" \
+TRACK_DUPLICATE_BIRTH_IOU=0.05 \
+TRACK_CLASS_IMMEDIATE_BIRTH_SCORES="0:0.90" \
+SUBMISSION_DECIMALS=2 \
+bash scripts/run_star_geometry_val.sh
+
+python scripts/remap_submission_ids.py \
+  --input "$STAR_DIR/track1_star_online.txt" \
+  --output "$RUN_DIR/track1.txt"
+python -m physicalai_track1 validate --submission "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_validate.json"
+python scripts/audit_track1_submission.py "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_audit.txt"
+(cd "$RUN_DIR" && rm -f track1.zip && zip -j -q track1.zip track1.txt)
+
+echo "submission=$RUN_DIR/track1.zip"
+cat "$RUN_DIR/submission_validate.json"
+cat "$RUN_DIR/submission_audit.txt"
+ls -lh "$RUN_DIR/track1.txt" "$RUN_DIR/track1.zip"
+date

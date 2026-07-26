@@ -1,0 +1,69 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_RGB_Residual
+#PBS -l select=1:mem=120gb:ncpus=12
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+PRED_VAL="${PRED_VAL:-$SCRATCH_ROOT/runs/inference/yolo11x1920_current_star_val_fixed/star/track1_star_online.txt}"
+TEACHER_VDETR="${TEACHER_VDETR:-$SCRATCH_ROOT/runs/vdetr_export/aicity2026_merged4_rareweighted24k_best_val_slices.tsv}"
+BASE_TEST="${BASE_TEST:-$SCRATCH_ROOT/runs/submissions/test_yolo11x1920_dfine_p025_bev_gap60_cost115_v2/track1.txt}"
+RUN_NAME="${RUN_NAME:-test_yolo11x1920_dfine_gap60_rgb_residual_s035}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+STRENGTHS="${STRENGTHS:-0.20 0.35 0.50}"
+TEACHER_WEIGHT="${TEACHER_WEIGHT:-0.25}"
+TEACHER_MIN_SCORE="${TEACHER_MIN_SCORE:-0.20}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+echo "pred_val=$PRED_VAL"
+echo "teacher_vdetr=$TEACHER_VDETR"
+echo "base_test=$BASE_TEST"
+echo "run_dir=$RUN_DIR"
+
+MODEL="$RUN_DIR/rgb_residual_model.json"
+python scripts/rgb_residual_correction.py train \
+  --pred "$PRED_VAL" \
+  --data-root "$DATA_ROOT" \
+  --teacher-vdetr "$TEACHER_VDETR" \
+  --teacher-min-score "$TEACHER_MIN_SCORE" \
+  --teacher-weight "$TEACHER_WEIGHT" \
+  --model-out "$MODEL" > "$RUN_DIR/train_stats.json"
+cat "$RUN_DIR/train_stats.json"
+
+for strength in $STRENGTHS; do
+  tag="${strength/./p}"
+  out_dir="$RUN_DIR/strength_$tag"
+  mkdir -p "$out_dir"
+  python scripts/rgb_residual_correction.py apply \
+    --input "$BASE_TEST" \
+    --model "$MODEL" \
+    --strength "$strength" \
+    --out "$out_dir/track1.txt" \
+    --zip-out "$out_dir/track1.zip" > "$out_dir/apply_stats.json"
+  python -m physicalai_track1 validate --submission "$out_dir/track1.txt" > "$out_dir/submission_validate.json"
+  python scripts/audit_track1_submission.py "$out_dir/track1.txt" > "$out_dir/submission_audit.txt"
+  echo "=== strength=$strength ==="
+  cat "$out_dir/apply_stats.json"
+  cat "$out_dir/submission_validate.json"
+  cat "$out_dir/submission_audit.txt"
+  ls -lh "$out_dir/track1.zip"
+done
+
+date

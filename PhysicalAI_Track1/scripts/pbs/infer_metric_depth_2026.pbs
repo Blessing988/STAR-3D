@@ -1,0 +1,80 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_MetricDepth_EstRGB
+#PBS -l select=1:mem=120gb:ncpus=12:ngpus=1:glist=h100
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+DATASET_ROOT="${DATASET_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+ENV_PREFIX="${ENV_PREFIX:-/path/to/conda_envs/depth_bakeoff}"
+CACHE_ROOT="${CACHE_ROOT:-/path/to/scratch/PhysicalAI_Track1/cache/depth_bakeoff}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/depth_bakeoff}"
+MODEL="${MODEL:-unidepth_v2}"
+MODEL_ID="${MODEL_ID:-lpiccinelli/unidepth-v2-vitl14}"
+REPO_ROOT="${REPO_ROOT:-/path/to/PhysicalAI_Track1/external/UniDepth}"
+METRIC3D_REPO="${METRIC3D_REPO:-/path/to/PhysicalAI_Track1/external/Metric3D}"
+HUB_MODEL="${HUB_MODEL:-metric3d_vit_large}"
+OUT_DIR="${OUT_DIR:-/path/to/scratch/PhysicalAI_Track1/depth_estimates/${MODEL}_smoke_val_s300_1536}"
+SPLITS="${SPLITS:-val}"
+SCENES="${SCENES:-Warehouse_020}"
+FRAME_STRIDE="${FRAME_STRIDE:-300}"
+MAX_FRAMES="${MAX_FRAMES:-600}"
+RESIZE_MAX_SIDE="${RESIZE_MAX_SIDE:-1536}"
+OVERWRITE="${OVERWRITE:-0}"
+
+mkdir -p "$LOG_DIR" "$OUT_DIR" "$CACHE_ROOT"/{tmp,pip,torch,hf}
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+export TMPDIR="$CACHE_ROOT/tmp"
+export TEMP="$CACHE_ROOT/tmp"
+export TMP="$CACHE_ROOT/tmp"
+export PIP_CACHE_DIR="$CACHE_ROOT/pip"
+export TORCH_HOME="$CACHE_ROOT/torch"
+export HF_HOME="$CACHE_ROOT/hf"
+export HF_HUB_CACHE="$CACHE_ROOT/hf/hub"
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+set +u
+source activate "$ENV_PREFIX"
+set -u
+
+cd "$PROJECT_ROOT"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+if [[ "$MODEL" == "metric3d" ]]; then
+  export PYTHONPATH="$METRIC3D_REPO:$PYTHONPATH"
+fi
+
+SPLITS_ARGS="${SPLITS//+/ }"
+SPLITS_ARGS="${SPLITS_ARGS//,/ }"
+SCENES_ARGS="${SCENES//+/ }"
+SCENES_ARGS="${SCENES_ARGS//,/ }"
+
+cmd=(python scripts/estimate_metric_depth_2026.py
+  --model "$MODEL"
+  --dataset-root "$DATASET_ROOT"
+  --out-dir "$OUT_DIR"
+  --repo-root "$REPO_ROOT"
+  --model-id "$MODEL_ID"
+  --metric3d-repo "$METRIC3D_REPO"
+  --hub-model "$HUB_MODEL"
+  --frame-stride "$FRAME_STRIDE"
+  --resize-max-side "$RESIZE_MAX_SIDE"
+  --splits $SPLITS_ARGS)
+
+if [[ -n "$MAX_FRAMES" ]]; then
+  cmd+=(--max-frames "$MAX_FRAMES")
+fi
+if [[ -n "$SCENES" ]]; then
+  cmd+=(--scenes $SCENES_ARGS)
+fi
+if [[ "$OVERWRITE" == "1" || "$OVERWRITE" == "true" || "$OVERWRITE" == "TRUE" ]]; then
+  cmd+=(--overwrite)
+fi
+
+echo "${cmd[@]}"
+"${cmd[@]}"

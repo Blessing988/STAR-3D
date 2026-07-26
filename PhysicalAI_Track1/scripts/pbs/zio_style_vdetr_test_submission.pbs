@@ -1,0 +1,83 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_ZIOStyle_VDETR
+#PBS -l select=1:mem=120gb:ncpus=16
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+ZIO_ROOT="${ZIO_ROOT:-$PROJECT_ROOT/external/AIC2025_Track1_ZV}"
+VDETR="${VDETR:?VDETR is required}"
+RUN_NAME="${RUN_NAME:?RUN_NAME is required}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+CLASS_MODE="${CLASS_MODE:-merged4}"
+ALLOWED_GROUPS="${ALLOWED_GROUPS:-0,1,2,3}"
+DEFAULT_VEHICLE_CLASS="${DEFAULT_VEHICLE_CLASS:-6}"
+DEFAULT_HUMANOID_CLASS="${DEFAULT_HUMANOID_CLASS:-4}"
+MIN_SCORE="${MIN_SCORE:-0.25}"
+TRACK_SCORE_THRESHOLD="${TRACK_SCORE_THRESHOLD:-0.30}"
+NMS_DISTANCE_M="${NMS_DISTANCE_M:-0.75}"
+TOPK_PER_CLASS="${TOPK_PER_CLASS:-60}"
+TOPK_TOTAL="${TOPK_TOTAL:-180}"
+MAX_AGE="${MAX_AGE:-15}"
+MIN_HITS="${MIN_HITS:-1}"
+IOU_THRESHOLD="${IOU_THRESHOLD:-0.08}"
+GLOBAL_RELINK="${GLOBAL_RELINK:-0}"
+RELINK_MAX_GAP="${RELINK_MAX_GAP:-90}"
+RELINK_MAX_DISTANCE="${RELINK_MAX_DISTANCE:-4.0}"
+RELINK_MIN_LEN="${RELINK_MIN_LEN:-2}"
+SCENE_OFFSET="${SCENE_OFFSET:-0}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+ALLOWED_GROUPS="${ALLOWED_GROUPS//:/,}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+set +u
+source activate "$CONDA_ENV"
+set -u
+export PYTHONPATH="$PROJECT_ROOT/src:$ZIO_ROOT/Tracker:${PYTHONPATH:-}"
+
+cmd=(python scripts/run_zio_style_vdetr_tracking.py
+  --vdetr "$VDETR"
+  --zio-root "$ZIO_ROOT"
+  --out "$RUN_DIR/track1.txt"
+  --zip-out "$RUN_DIR/track1.zip"
+  --class-mode "$CLASS_MODE"
+  --allowed-groups "$ALLOWED_GROUPS"
+  --default-vehicle-class "$DEFAULT_VEHICLE_CLASS"
+  --default-humanoid-class "$DEFAULT_HUMANOID_CLASS"
+  --min-score "$MIN_SCORE"
+  --track-score-threshold "$TRACK_SCORE_THRESHOLD"
+  --nms-distance-m "$NMS_DISTANCE_M"
+  --topk-per-class "$TOPK_PER_CLASS"
+  --topk-total "$TOPK_TOTAL"
+  --max-age "$MAX_AGE"
+  --min-hits "$MIN_HITS"
+  --iou-threshold "$IOU_THRESHOLD"
+  --relink-max-gap "$RELINK_MAX_GAP"
+  --relink-max-distance "$RELINK_MAX_DISTANCE"
+  --relink-min-len "$RELINK_MIN_LEN"
+  --scene-offset "$SCENE_OFFSET")
+
+if [[ "$GLOBAL_RELINK" == "1" ]]; then
+  cmd+=(--global-relink)
+fi
+
+echo "${cmd[@]}"
+"${cmd[@]}"
+
+cp "$RUN_DIR/track1.txt.json" "$RUN_DIR/submission_validate.json"
+python scripts/audit_track1_submission.py "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_audit.txt"
+ls -lh "$RUN_DIR"/track1.*
+cat "$RUN_DIR/track1.txt.json"
+cat "$RUN_DIR/submission_validate.json"
+cat "$RUN_DIR/submission_audit.txt"

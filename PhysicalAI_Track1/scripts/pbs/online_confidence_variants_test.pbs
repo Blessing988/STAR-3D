@@ -1,0 +1,97 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_OnlineConf_Test
+#PBS -l select=1:mem=120gb:ncpus=16:ngpus=1
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+SOURCE_RUN="${SOURCE_RUN:-test_yolo40e_dfine_precision025_adaptive_score090}"
+FUSED="${FUSED:-$SCRATCH_ROOT/runs/submissions/$SOURCE_RUN/star/fused.tsv}"
+RUN_ROOT="${RUN_ROOT:-$SCRATCH_ROOT/runs/submissions/online_confidence_${SOURCE_RUN}}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+mkdir -p "$RUN_ROOT" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "fused=$FUSED"
+echo "run_root=$RUN_ROOT"
+
+if [[ ! -s "$FUSED" ]]; then
+  echo "Missing fused detections: $FUSED" >&2
+  exit 2
+fi
+
+run_variant() {
+  local name="$1"
+  local min_conf="$2"
+  local adaptive_birth_score="$3"
+  local adaptive_birth_sources="$4"
+  local class_hits="$5"
+  local class_immediate="$6"
+  local out_dir="$RUN_ROOT/$name"
+
+  mkdir -p "$out_dir"
+  echo "=== variant=$name min_conf=$min_conf birth_score=$adaptive_birth_score birth_sources=$adaptive_birth_sources"
+
+  python -m physicalai_track1 track-online \
+    --fused "$FUSED" \
+    --class-min-scores "0:0.75,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62" \
+    --min-score 0.0 \
+    --max-cost 1.10 \
+    --max-distance-m 1.60 \
+    --max-age 45 \
+    --class-max-distances-m "0:1.45,1:2.35,2:2.00,3:2.40,4:2.10,5:1.85,6:2.30" \
+    --class-max-costs "0:1.05,1:1.22,2:1.15,3:1.22,4:1.18,5:1.12,6:1.20" \
+    --class-max-ages "0:45,1:75,2:65,3:75,4:65,5:55,6:70" \
+    --distance-weight 1.0 \
+    --iou-weight 0.35 \
+    --yaw-weight 0.08 \
+    --score-weight 0.18 \
+    --source-weight 0.12 \
+    --position-alpha 0.85 \
+    --velocity-alpha 0.70 \
+    --confirmation-hits 1 \
+    --confirmation-mode confirmed_only \
+    --class-confirmation-hits "$class_hits" \
+    --class-duplicate-birth-distances-m "0:0.45,1:0.90,2:0.75,3:0.90,4:0.75,5:0.65,6:0.85" \
+    --duplicate-birth-iou 0.05 \
+    --class-immediate-birth-scores "$class_immediate" \
+    --min-track-confidence "$min_conf" \
+    --adaptive-birth-score "$adaptive_birth_score" \
+    --adaptive-birth-min-sources "$adaptive_birth_sources" \
+    --decimals 2 \
+    --out "$out_dir/track1_raw.txt"
+
+  python scripts/remap_submission_ids.py \
+    --input "$out_dir/track1_raw.txt" \
+    --output "$out_dir/track1.txt"
+  python -m physicalai_track1 validate --submission "$out_dir/track1.txt" > "$out_dir/submission_validate.json"
+  python scripts/audit_track1_submission.py "$out_dir/track1.txt" > "$out_dir/submission_audit.txt"
+  (cd "$out_dir" && rm -f track1.zip && zip -j -q track1.zip track1.txt)
+
+  ls -lh "$out_dir/track1.txt" "$out_dir/track1.zip"
+  cat "$out_dir/submission_validate.json"
+  cat "$out_dir/submission_audit.txt"
+}
+
+run_variant online_conf_balanced 0.08 0.88 2 "0:2" "0:0.90"
+run_variant online_conf_precision 0.12 0.90 2 "0:2,1:2,6:2" "0:0.92,1:0.94,6:0.90"
+run_variant online_conf_recall 0.04 0.84 2 "0:2" "0:0.88"
+
+echo "outputs:"
+find "$RUN_ROOT" -maxdepth 2 -name track1.zip -print
+date

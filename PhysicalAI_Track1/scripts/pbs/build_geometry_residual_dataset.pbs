@@ -1,0 +1,41 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Geometry_Data
+#PBS -l select=1:mem=160gb:ncpus=16
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+FRAME_STRIDE="${FRAME_STRIDE:-15}"
+OUT="${OUT:-$SCRATCH_ROOT/datasets/geometry_residual/train_stride${FRAME_STRIDE}.npz}"
+PRIORS="${PRIORS:-$SCRATCH_ROOT/datasets/geometry_residual/priors_train.json}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/geometry}"
+
+mkdir -p "$(dirname "$OUT")" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+python -m physicalai_track1 build-priors \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split train \
+  --out "$PRIORS"
+
+python -m physicalai_track1 build-geometry-dataset \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split train \
+  --priors "$PRIORS" \
+  --frame-stride "$FRAME_STRIDE" \
+  --out "$OUT"

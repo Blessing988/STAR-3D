@@ -1,0 +1,58 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Association_Model
+#PBS -l select=1:mem=120gb:ncpus=16
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+FRAME_STRIDE="${FRAME_STRIDE:-1}"
+MAX_SAMPLES_PER_CLASS_LABEL="${MAX_SAMPLES_PER_CLASS_LABEL:-75000}"
+DATASET="${DATASET:-$SCRATCH_ROOT/datasets/association/train_pairs_stride${FRAME_STRIDE}.tsv}"
+MODEL_OUT="${MODEL_OUT:-$SCRATCH_ROOT/runs/association/assoc_logreg_train_stride${FRAME_STRIDE}.json}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/association}"
+
+mkdir -p "$(dirname "$DATASET")" "$(dirname "$MODEL_OUT")" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "dataset=$DATASET"
+echo "model_out=$MODEL_OUT"
+echo "frame_stride=$FRAME_STRIDE"
+echo "max_samples_per_class_label=$MAX_SAMPLES_PER_CLASS_LABEL"
+
+python -m physicalai_track1 build-association-dataset \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split train \
+  --frame-stride "$FRAME_STRIDE" \
+  --positive-steps 1 5 15 30 \
+  --negative-frame-tolerance 2 \
+  --negatives-per-positive 2 \
+  --max-samples-per-class-label "$MAX_SAMPLES_PER_CLASS_LABEL" \
+  --out "$DATASET"
+
+python -m physicalai_track1 train-association-model \
+  --dataset "$DATASET" \
+  --epochs 80 \
+  --batch-size 8192 \
+  --learning-rate 0.05 \
+  --weight-decay 0.0001 \
+  --val-fraction 0.20 \
+  --out "$MODEL_OUT"
+
+ls -lh "$DATASET" "$DATASET.json" "$MODEL_OUT"
+date

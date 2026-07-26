@@ -1,0 +1,55 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_Setup_DepthPro
+#PBS -l select=1:mem=80gb:ncpus=12:ngpus=1:glist=h100
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+ENV_PREFIX="${ENV_PREFIX:-/path/to/conda_envs/depth_pro}"
+DEPTH_PRO_ROOT="${DEPTH_PRO_ROOT:-$PROJECT_ROOT/external/ml-depth-pro}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/depth_pro}"
+CACHE_ROOT="${CACHE_ROOT:-/path/to/scratch/PhysicalAI_Track1/cache/depth_pro}"
+
+mkdir -p "$LOG_DIR" "$CACHE_ROOT"/{tmp,pip,torch,hf,conda_pkgs}
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+export TMPDIR="$CACHE_ROOT/tmp"
+export TEMP="$CACHE_ROOT/tmp"
+export TMP="$CACHE_ROOT/tmp"
+export PIP_CACHE_DIR="$CACHE_ROOT/pip"
+export TORCH_HOME="$CACHE_ROOT/torch"
+export HF_HOME="$CACHE_ROOT/hf"
+export CONDA_PKGS_DIRS="$CACHE_ROOT/conda_pkgs"
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+if [[ ! -d "$ENV_PREFIX" ]]; then
+  conda create -y -p "$ENV_PREFIX" python=3.9
+fi
+set +u
+source activate "$ENV_PREFIX"
+set -u
+
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+python -m pip install opencv-python-headless pillow numpy scipy tqdm matplotlib
+
+mkdir -p "$(dirname "$DEPTH_PRO_ROOT")"
+if [[ ! -d "$DEPTH_PRO_ROOT/.git" ]]; then
+  git clone https://github.com/apple/ml-depth-pro.git "$DEPTH_PRO_ROOT"
+fi
+cd "$DEPTH_PRO_ROOT"
+python -m pip install -e .
+source get_pretrained_models.sh
+
+python - <<'PY'
+import torch
+import depth_pro
+print("torch", torch.__version__, torch.cuda.is_available())
+model, transform = depth_pro.create_model_and_transforms()
+print("depth_pro_ok", model.__class__.__name__)
+PY

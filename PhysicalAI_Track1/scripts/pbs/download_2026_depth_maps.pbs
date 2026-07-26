@@ -1,0 +1,88 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Download_2026_Depth
+#PBS -l select=1:mem=32gb:ncpus=8
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+
+set -euo pipefail
+
+REPO_ID="${REPO_ID:-nvidia/PhysicalAI-SmartSpaces}"
+LOCAL_DIR="${LOCAL_DIR:-/path/to/PhysicalAI-SmartSpaces}"
+MAX_WORKERS="${MAX_WORKERS:-8}"
+SCENES="${SCENES:-}"
+SCENE_BATCH="${SCENE_BATCH:-}"
+INCLUDE_PATTERNS="${INCLUDE_PATTERNS:-}"
+
+if [[ -z "$SCENES" && -n "$SCENE_BATCH" ]]; then
+  case "$SCENE_BATCH" in
+    train_003_006)
+      SCENES="train/Warehouse_003,train/Warehouse_004,train/Warehouse_005,train/Warehouse_006"
+      ;;
+    train_007_010)
+      SCENES="train/Warehouse_007,train/Warehouse_008,train/Warehouse_009,train/Warehouse_010"
+      ;;
+    train_011_014)
+      SCENES="train/Warehouse_011,train/Warehouse_012,train/Warehouse_013,train/Warehouse_014"
+      ;;
+    train_015_val_022)
+      SCENES="train/Warehouse_015,train/Warehouse_016,train/Warehouse_017,train/Warehouse_018,train/Warehouse_019,val/Warehouse_020,val/Warehouse_021,val/Warehouse_022"
+      ;;
+    *)
+      echo "ERROR: unknown SCENE_BATCH=${SCENE_BATCH}" >&2
+      exit 2
+      ;;
+  esac
+fi
+
+if [[ -z "$INCLUDE_PATTERNS" && -n "$SCENES" ]]; then
+  INCLUDE_PATTERNS=""
+  IFS=',' read -r -a scene_items <<< "$SCENES"
+  for scene_item in "${scene_items[@]}"; do
+    if [[ -z "$scene_item" ]]; then
+      continue
+    fi
+    if [[ -z "$INCLUDE_PATTERNS" ]]; then
+      INCLUDE_PATTERNS="MTMC_Tracking_2026/${scene_item}/depth_maps/**"
+    else
+      INCLUDE_PATTERNS="${INCLUDE_PATTERNS} MTMC_Tracking_2026/${scene_item}/depth_maps/**"
+    fi
+  done
+fi
+
+if [[ -z "$INCLUDE_PATTERNS" ]]; then
+  INCLUDE_PATTERNS="MTMC_Tracking_2026/train/*/depth_maps/** MTMC_Tracking_2026/val/*/depth_maps/**"
+fi
+
+echo "repo=${REPO_ID}"
+echo "local_dir=${LOCAL_DIR}"
+echo "max_workers=${MAX_WORKERS}"
+echo "scene_batch=${SCENE_BATCH}"
+echo "scenes=${SCENES}"
+echo "include_patterns=${INCLUDE_PATTERNS}"
+date
+
+mkdir -p "${LOCAL_DIR}"
+
+if command -v huggingface-cli >/dev/null 2>&1; then
+  HF_BIN=huggingface-cli
+elif command -v hf >/dev/null 2>&1; then
+  HF_BIN=hf
+else
+  echo "ERROR: neither huggingface-cli nor hf found on PATH" >&2
+  exit 2
+fi
+
+read -r -a include_args <<< "${INCLUDE_PATTERNS}"
+
+"${HF_BIN}" download "${REPO_ID}" \
+  --repo-type dataset \
+  --local-dir "${LOCAL_DIR}" \
+  --max-workers "${MAX_WORKERS}" \
+  --include "${include_args[@]}"
+
+echo "Depth download complete."
+du -sh "${LOCAL_DIR}/MTMC_Tracking_2026"/train/*/depth_maps 2>/dev/null | tail -20 || true
+du -sh "${LOCAL_DIR}/MTMC_Tracking_2026"/val/*/depth_maps 2>/dev/null || true
+date

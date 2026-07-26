@@ -1,0 +1,146 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_YOLO_Test_Submission
+#PBS -l select=1:mem=120gb:ncpus=16:ngpus=1
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+YEAR="${YEAR:-2026}"
+FRAME_STRIDE="${FRAME_STRIDE:-1}"
+DATASET_DIR="${DATASET_DIR:-$SCRATCH_ROOT/datasets/yolo_${YEAR}_test_stride${FRAME_STRIDE}}"
+IMAGE_DIR="${IMAGE_DIR:-$DATASET_DIR/images/test}"
+MANIFEST="${MANIFEST:-$DATASET_DIR/test_frames.tsv}"
+MODEL="${MODEL:-$SCRATCH_ROOT/runs/detector/yolo26x_1536_2xh100_stride30_class_balanced_from_e1_ncclsafe/weights/best.pt}"
+IMGSZ="${IMGSZ:-1536}"
+CONF="${CONF:-0.01}"
+IOU="${IOU:-0.70}"
+MAX_DET="${MAX_DET:-500}"
+BATCH="${BATCH:-8}"
+SCENES="${SCENES:-}"
+MAX_FRAME_ID="${MAX_FRAME_ID:-}"
+RUN_NAME="${RUN_NAME:-test_submission_${PBS_JOBID:-manual}}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+SUBMISSION_OUT="${SUBMISSION_OUT:-$RUN_DIR/track1_test_submission.txt}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+FUSE_CLASS_DISTANCE_M="${FUSE_CLASS_DISTANCE_M:-0:1.2,1:2.0,6:2.5}"
+TRACK_CLASS_MIN_SCORES="${TRACK_CLASS_MIN_SCORES:-0:0.6,1:0.8,6:0.4}"
+TRACK_MIN_SCORE="${TRACK_MIN_SCORE:-0.0}"
+TRACK_MAX_COST="${TRACK_MAX_COST:-1.20}"
+TRACK_MAX_DISTANCE_M="${TRACK_MAX_DISTANCE_M:-1.8}"
+
+bind_pbs_gpu() {
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    return 0
+  fi
+  if [[ -z "${PBS_GPUFILE:-}" || ! -f "$PBS_GPUFILE" ]]; then
+    return 0
+  fi
+  local line token
+  line="$(head -1 "$PBS_GPUFILE")"
+  token="${line##*gpu}"
+  if [[ ! "$token" =~ ^[0-9]+$ ]]; then
+    token="${line##*nvidia}"
+  fi
+  if [[ ! "$token" =~ ^[0-9]+$ ]]; then
+    token="${line##*[-:[:space:]]}"
+  fi
+  if [[ "$token" =~ ^[0-9]+$ ]]; then
+    export CUDA_VISIBLE_DEVICES="$token"
+  fi
+}
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+bind_pbs_gpu
+
+date
+hostname
+echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
+nvidia-smi || true
+echo "model=$MODEL"
+echo "manifest=$MANIFEST"
+echo "image_dir=$IMAGE_DIR"
+echo "run_dir=$RUN_DIR"
+echo "submission_out=$SUBMISSION_OUT"
+
+if [[ ! -s "$MANIFEST" ]]; then
+  echo "Missing manifest: $MANIFEST" >&2
+  echo "Prepare test frames first, for example:" >&2
+  echo "qsub -v FRAME_STRIDE=$FRAME_STRIDE scripts/pbs/prepare_yolo_test_frames.pbs" >&2
+  exit 2
+fi
+
+yolo predict \
+  model="$MODEL" \
+  source="$IMAGE_DIR" \
+  imgsz="$IMGSZ" \
+  conf="$CONF" \
+  iou="$IOU" \
+  max_det="$MAX_DET" \
+  device=0 \
+  batch="$BATCH" \
+  save=False \
+  save_txt=True \
+  save_conf=True \
+  project="$RUN_DIR" \
+  name=predictions \
+  exist_ok=True \
+  verbose=False
+
+INFER_ARGS=(python -m physicalai_track1 import-yolo-predictions
+  --manifest "$MANIFEST"
+  --labels-dir "$RUN_DIR/predictions/labels"
+  --min-score "$CONF"
+  --nms-iou "$IOU"
+  --out "$RUN_DIR/detections.tsv")
+if [[ -n "$SCENES" ]]; then
+  INFER_ARGS+=(--scenes $SCENES)
+fi
+if [[ -n "$MAX_FRAME_ID" ]]; then
+  INFER_ARGS+=(--max-frame-id "$MAX_FRAME_ID")
+fi
+"${INFER_ARGS[@]}"
+
+DATA_ROOT="$DATA_ROOT" \
+YEAR="$YEAR" \
+SPLIT=test \
+DO_EVAL=0 \
+DETECTIONS="$RUN_DIR/detections.tsv" \
+RUN_DIR="$RUN_DIR/star" \
+FUSE_CLASS_DISTANCE_M="$FUSE_CLASS_DISTANCE_M" \
+TRACK_CLASS_MIN_SCORES="$TRACK_CLASS_MIN_SCORES" \
+TRACK_MIN_SCORE="$TRACK_MIN_SCORE" \
+TRACK_MAX_COST="$TRACK_MAX_COST" \
+TRACK_MAX_DISTANCE_M="$TRACK_MAX_DISTANCE_M" \
+SUBMISSION_DECIMALS=2 \
+bash scripts/run_star_geometry_val.sh
+
+cp "$RUN_DIR/star/track1_star_online.txt" "$SUBMISSION_OUT"
+python scripts/remap_submission_ids.py \
+  --input "$SUBMISSION_OUT" \
+  --output "$RUN_DIR/track1.txt"
+python -m physicalai_track1 validate --submission "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_validate.json"
+python scripts/audit_track1_submission.py "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_audit.txt"
+(cd "$RUN_DIR" && rm -f track1.zip && zip -j track1.zip track1.txt)
+zip -j "$SUBMISSION_OUT.zip" "$SUBMISSION_OUT" || true
+
+echo "submission=$SUBMISSION_OUT"
+echo "submission_zip=$SUBMISSION_OUT.zip"
+echo "official_submission=$RUN_DIR/track1.zip"
+cat "$RUN_DIR/submission_validate.json"
+cat "$RUN_DIR/submission_audit.txt"
+date

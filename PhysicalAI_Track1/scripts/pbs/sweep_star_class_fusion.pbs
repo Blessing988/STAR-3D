@@ -1,0 +1,59 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_STAR_ClassFusion
+#PBS -l select=1:mem=100gb:ncpus=16
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+LIFTED="${LIFTED:?Submit with -v LIFTED=/path/to/lifted.tsv}"
+SCENES="${SCENES:-Warehouse_020 Warehouse_021 Warehouse_022}"
+MAX_FRAMES="${MAX_FRAMES:-600}"
+FRAME_STRIDE="${FRAME_STRIDE:-30}"
+DISTANCES_M="${DISTANCES_M:-0.8 1.2 1.6 2.0 2.5}"
+MIN_SOURCES="${MIN_SOURCES:-1 2}"
+NMS_DISTANCES_M="${NMS_DISTANCES_M:-0.25 0.50}"
+TRACKER_MIN_SCORE="${TRACKER_MIN_SCORE:-0.0}"
+TRACKER_MAX_COST="${TRACKER_MAX_COST:-1.20}"
+TRACKER_MAX_DISTANCE_M="${TRACKER_MAX_DISTANCE_M:-1.8}"
+RUN_NAME="${RUN_NAME:-class_fusion_${PBS_JOBID:-manual}}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/sweeps/$RUN_NAME}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/sweeps}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "lifted=$LIFTED"
+echo "run_dir=$RUN_DIR"
+
+python -m physicalai_track1 sweep-class-fusion \
+  --lifted "$LIFTED" \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split val \
+  --scenes $SCENES \
+  --max-frames-per-scene "$MAX_FRAMES" \
+  --frame-stride "$FRAME_STRIDE" \
+  --distances-m $DISTANCES_M \
+  --min-sources $MIN_SOURCES \
+  --nms-distances-m $NMS_DISTANCES_M \
+  --tracker-min-score "$TRACKER_MIN_SCORE" \
+  --tracker-max-cost "$TRACKER_MAX_COST" \
+  --tracker-max-distance-m "$TRACKER_MAX_DISTANCE_M" \
+  --out-dir "$RUN_DIR"
+
+date

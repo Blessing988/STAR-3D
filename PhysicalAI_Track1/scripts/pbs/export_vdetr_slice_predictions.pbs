@@ -1,0 +1,51 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_VDETR_Export
+#PBS -l select=1:mem=160gb:ncpus=16:ngpus=1:glist=a40
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+VDETR_ROOT="${VDETR_ROOT:-$PROJECT_ROOT/external/AIC2025_Track1_ZV/V-DETR}"
+ENV_PREFIX="${ENV_PREFIX:-/path/to/conda_envs/vdetr_aic2026}"
+CONFIG="${CONFIG:-$PROJECT_ROOT/configs/vdetr_aicity2026_7cls.yaml}"
+DATASET_ROOT="${DATASET_ROOT:-/path/to/scratch/PhysicalAI_Track1/datasets/zio_pcd_2026_slice20_stride100}"
+CHECKPOINT="${CHECKPOINT:-/path/to/scratch/PhysicalAI_Track1/runs/vdetr/aicity2026_7cls_stride100_e20_a40_2gpu/checkpoint_0000.pth}"
+OUT_TSV="${OUT_TSV:-/path/to/scratch/PhysicalAI_Track1/runs/vdetr_export/aicity2026_epoch0000_val_slices.tsv}"
+CONF="${CONF:-0.05}"
+NUM_WORKERS="${NUM_WORKERS:-8}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/vdetr}"
+
+mkdir -p "$(dirname "$OUT_TSV")" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+module unload gcc/15.2.0 || true
+module load cuda/11.4 || module load cuda/11.2 || true
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+set +u
+source activate "$ENV_PREFIX"
+set -u
+
+if command -v nvcc >/dev/null 2>&1; then
+  export CUDA_HOME="$(dirname "$(dirname "$(command -v nvcc)")")"
+  export CUDA_PATH="$CUDA_HOME"
+  export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+fi
+
+cd "$VDETR_ROOT"
+export PYTHONPATH="$VDETR_ROOT:$VDETR_ROOT/third_party/pointnet2:$PROJECT_ROOT/scripts:$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+python "$PROJECT_ROOT/scripts/export_vdetr_slice_predictions.py" \
+  --config "$CONFIG" \
+  --dataset-root "$DATASET_ROOT" \
+  --checkpoint "$CHECKPOINT" \
+  --out-tsv "$OUT_TSV" \
+  --workers "$NUM_WORKERS" \
+  --conf "$CONF"
+
+wc -l "$OUT_TSV"

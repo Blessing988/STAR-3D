@@ -1,0 +1,164 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_DepthMV_Test
+#PBS -l select=1:mem=420gb:ncpus=16
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+SPLIT="${SPLIT:-test}"
+SCENES="${SCENES:-}"
+SOURCE_RUN="${SOURCE_RUN:-test_yolo11x1920_resume_e29_dfine_p025_adaptive_online}"
+DETECTIONS="${DETECTIONS:-$SCRATCH_ROOT/runs/submissions/$SOURCE_RUN/detections_ensemble.tsv}"
+BASE_FUSED="${BASE_FUSED:-$SCRATCH_ROOT/runs/submissions/$SOURCE_RUN/star/fused.tsv}"
+DEPTH_ROOT="${DEPTH_ROOT:-$SCRATCH_ROOT/depth_estimates/depth_pro_calib_focal_${SPLIT}_stride30_1536}"
+RUN_NAME="${RUN_NAME:-test_depthpro_multiview_object_s2_alpha020}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+MIN_SOURCES="${MIN_SOURCES:-2}"
+ALPHA="${ALPHA:-0.20}"
+MIN_SCORE="${MIN_SCORE:-0.35}"
+CLASS_MIN_SCORES="${CLASS_MIN_SCORES:-0:0.70,1:0.75,2:0.35,3:0.35,4:0.35,5:0.35,6:0.45}"
+MATCH_GATE_M="${MATCH_GATE_M:-1.20}"
+CLUSTER_GATE_M="${CLUSTER_GATE_M:-1.40}"
+OPTIMIZER="${OPTIMIZER:-0}"
+MAX_SHIFT_M="${MAX_SHIFT_M:-0.30}"
+SEARCH_RADIUS_M="${SEARCH_RADIUS_M:-0.10}"
+MIN_LOSS_IMPROVEMENT="${MIN_LOSS_IMPROVEMENT:-0.005}"
+MAX_LOSS_INCREASE="${MAX_LOSS_INCREASE:-0.000}"
+DEPTH_WEIGHT="${DEPTH_WEIGHT:-0.08}"
+MOVEMENT_WEIGHT="${MOVEMENT_WEIGHT:-0.03}"
+
+TRACK_CLASS_MIN_SCORES="${TRACK_CLASS_MIN_SCORES:-0:0.75,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62}"
+TRACK_CLASS_MAX_DISTANCES_M="${TRACK_CLASS_MAX_DISTANCES_M:-0:1.45,1:2.35,2:2.00,3:2.40,4:2.10,5:1.85,6:2.30}"
+TRACK_CLASS_MAX_COSTS="${TRACK_CLASS_MAX_COSTS:-0:1.05,1:1.22,2:1.15,3:1.22,4:1.18,5:1.12,6:1.20}"
+TRACK_CLASS_MAX_AGES="${TRACK_CLASS_MAX_AGES:-0:45,1:75,2:65,3:75,4:65,5:55,6:70}"
+TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M="${TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M:-0:0.45,1:0.90,2:0.75,3:0.90,4:0.75,5:0.65,6:0.85}"
+TRACK_POSITION_ALPHA="${TRACK_POSITION_ALPHA:-0.85}"
+TRACK_VELOCITY_ALPHA="${TRACK_VELOCITY_ALPHA:-0.70}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+set +u
+source activate "$CONDA_ENV"
+set -u
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "run_dir=$RUN_DIR"
+echo "split=$SPLIT"
+echo "detections=$DETECTIONS"
+echo "base_fused=$BASE_FUSED"
+echo "depth_root=$DEPTH_ROOT"
+echo "min_sources=$MIN_SOURCES alpha=$ALPHA"
+echo "optimizer=$OPTIMIZER max_shift_m=$MAX_SHIFT_M search_radius_m=$SEARCH_RADIUS_M min_loss_improvement=$MIN_LOSS_IMPROVEMENT max_loss_increase=$MAX_LOSS_INCREASE"
+
+if [[ ! -s "$DETECTIONS" ]]; then
+  echo "Missing detections: $DETECTIONS" >&2
+  exit 2
+fi
+if [[ ! -s "$BASE_FUSED" ]]; then
+  echo "Missing base fused: $BASE_FUSED" >&2
+  exit 3
+fi
+
+python -m physicalai_track1 build-priors \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split train \
+  --max-frames-per-scene 900 \
+  --out "$RUN_DIR/priors_train_sample.json"
+
+DEPTHMV_ARGS=(python scripts/depthpro_object_multiview_fusion.py \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split "$SPLIT" \
+  --detections "$DETECTIONS" \
+  --base-fused "$BASE_FUSED" \
+  --depth-root "$DEPTH_ROOT" \
+  --priors "$RUN_DIR/priors_train_sample.json" \
+  --min-sources "$MIN_SOURCES" \
+  --alpha "$ALPHA" \
+  --min-score "$MIN_SCORE" \
+  --class-min-scores "$CLASS_MIN_SCORES" \
+  --match-gate-m "$MATCH_GATE_M" \
+  --cluster-gate-m "$CLUSTER_GATE_M" \
+  --max-shift-m "$MAX_SHIFT_M" \
+  --search-radius-m "$SEARCH_RADIUS_M" \
+  --min-loss-improvement "$MIN_LOSS_IMPROVEMENT" \
+  --max-loss-increase "$MAX_LOSS_INCREASE" \
+  --depth-weight "$DEPTH_WEIGHT" \
+  --movement-weight "$MOVEMENT_WEIGHT" \
+  --out "$RUN_DIR/fused_depthmv.tsv" \
+  --report "$RUN_DIR/depthmv_report.json")
+if [[ "$OPTIMIZER" == "1" || "$OPTIMIZER" == "true" || "$OPTIMIZER" == "yes" ]]; then
+  DEPTHMV_ARGS+=(--optimizer)
+fi
+"${DEPTHMV_ARGS[@]}"
+
+python -m physicalai_track1 track-online \
+  --fused "$RUN_DIR/fused_depthmv.tsv" \
+  --class-min-scores "$TRACK_CLASS_MIN_SCORES" \
+  --min-score 0.0 \
+  --max-cost 1.10 \
+  --max-distance-m 1.60 \
+  --max-age 45 \
+  --class-max-distances-m "$TRACK_CLASS_MAX_DISTANCES_M" \
+  --class-max-costs "$TRACK_CLASS_MAX_COSTS" \
+  --class-max-ages "$TRACK_CLASS_MAX_AGES" \
+  --distance-weight 1.0 \
+  --iou-weight 0.35 \
+  --yaw-weight 0.08 \
+  --score-weight 0.18 \
+  --source-weight 0.12 \
+  --position-alpha "$TRACK_POSITION_ALPHA" \
+  --velocity-alpha "$TRACK_VELOCITY_ALPHA" \
+  --confirmation-hits 1 \
+  --confirmation-mode confirmed_only \
+  --class-confirmation-hits "0:2" \
+  --class-duplicate-birth-distances-m "$TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M" \
+  --duplicate-birth-iou 0.05 \
+  --class-immediate-birth-scores "0:0.90" \
+  --decimals 2 \
+  --out "$RUN_DIR/track1_raw.txt"
+
+python scripts/remap_submission_ids.py \
+  --input "$RUN_DIR/track1_raw.txt" \
+  --output "$RUN_DIR/track1.txt"
+python -m physicalai_track1 validate --submission "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_validate.json"
+if [[ "$SPLIT" != "test" ]]; then
+  EVAL_ARGS=(python -m physicalai_track1 eval
+    --data-root "$DATA_ROOT"
+    --year 2026
+    --split "$SPLIT"
+    --pred "$RUN_DIR/track1.txt"
+    --by-class)
+  if [[ -n "$SCENES" ]]; then
+    EVAL_ARGS+=(--scenes $SCENES)
+  fi
+  "${EVAL_ARGS[@]}" > "$RUN_DIR/eval.json"
+else
+  printf '{"eval_skipped": true, "reason": "test split"}\n' > "$RUN_DIR/eval.json"
+fi
+python scripts/audit_track1_submission.py "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_audit.txt"
+(cd "$RUN_DIR" && rm -f track1.zip && zip -j -q track1.zip track1.txt)
+
+echo "submission=$RUN_DIR/track1.zip"
+cat "$RUN_DIR/depthmv_report.json"
+cat "$RUN_DIR/submission_validate.json"
+cat "$RUN_DIR/eval.json"
+cat "$RUN_DIR/submission_audit.txt"
+ls -lh "$RUN_DIR/fused_depthmv.tsv" "$RUN_DIR/track1.txt" "$RUN_DIR/track1.zip"
+date

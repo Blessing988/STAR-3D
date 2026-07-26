@@ -1,0 +1,128 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_Class_Assoc_Variants
+#PBS -l select=1:mem=180gb:ncpus=24:ngpus=1
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+SOURCE_RUN="${SOURCE_RUN:-test_prev_best_1536_cli_h100}"
+SOURCE_DIR="${SOURCE_DIR:-$SCRATCH_ROOT/runs/submissions/$SOURCE_RUN}"
+FUSED="${FUSED:-$SOURCE_DIR/star/fused.tsv}"
+RUN_ROOT="${RUN_ROOT:-$SCRATCH_ROOT/runs/submissions/class_assoc_variants_${SOURCE_RUN}}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+mkdir -p "$RUN_ROOT" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "fused=$FUSED"
+echo "run_root=$RUN_ROOT"
+
+if [[ ! -s "$FUSED" ]]; then
+  echo "Missing fused detections: $FUSED" >&2
+  exit 2
+fi
+
+run_variant() {
+  local name="$1"
+  local class_scores="$2"
+  local max_cost="$3"
+  local max_distance="$4"
+  local max_age="$5"
+  local class_distances="$6"
+  local class_costs="$7"
+  local class_ages="$8"
+  local out_dir="$RUN_ROOT/$name"
+
+  mkdir -p "$out_dir"
+  echo "=== variant=$name"
+  echo "class_scores=$class_scores"
+  echo "max_cost=$max_cost max_distance=$max_distance max_age=$max_age"
+  echo "class_distances=$class_distances"
+  echo "class_costs=$class_costs"
+  echo "class_ages=$class_ages"
+
+  python -m physicalai_track1 track-online \
+    --fused "$FUSED" \
+    --class-min-scores "$class_scores" \
+    --min-score 0.0 \
+    --max-cost "$max_cost" \
+    --max-distance-m "$max_distance" \
+    --max-age "$max_age" \
+    --class-max-distances-m "$class_distances" \
+    --class-max-costs "$class_costs" \
+    --class-max-ages "$class_ages" \
+    --distance-weight 1.0 \
+    --iou-weight 0.35 \
+    --yaw-weight 0.08 \
+    --score-weight 0.18 \
+    --source-weight 0.12 \
+    --position-alpha 0.85 \
+    --velocity-alpha 0.70 \
+    --decimals 2 \
+    --out "$out_dir/track1_raw.txt"
+
+  python scripts/remap_submission_ids.py \
+    --input "$out_dir/track1_raw.txt" \
+    --output "$out_dir/track1.txt"
+
+  python -m physicalai_track1 validate --submission "$out_dir/track1.txt" > "$out_dir/validate.json"
+  python scripts/audit_track1_submission.py "$out_dir/track1.txt" > "$out_dir/audit.txt"
+  (cd "$out_dir" && rm -f track1.zip && zip -j -q track1.zip track1.txt)
+
+  echo "line_count=$(wc -l < "$out_dir/track1.txt")"
+  echo "object_count=$(cut -d' ' -f1,2,3 "$out_dir/track1.txt" | sort -u | wc -l)"
+  ls -lh "$out_dir/track1.txt" "$out_dir/track1.zip"
+  cat "$out_dir/validate.json"
+  cat "$out_dir/audit.txt"
+}
+
+# Start from v2's leaderboard-winning all-class confidence balance, then change
+# association behavior by class. People stay tight; forklifts/transporters/
+# pallet trucks get wider motion gates and longer ages to reduce ID splits.
+run_variant \
+  "v5_class_assoc_balanced" \
+  "0:0.75,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62" \
+  "1.10" "1.60" "45" \
+  "0:1.45,1:2.35,2:2.00,3:2.40,4:2.10,5:1.85,6:2.30" \
+  "0:1.05,1:1.22,2:1.15,3:1.22,4:1.18,5:1.12,6:1.20" \
+  "0:45,1:75,2:65,3:75,4:65,5:55,6:70"
+
+run_variant \
+  "v6_person_stable_vehicle_loose" \
+  "0:0.78,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62" \
+  "1.10" "1.60" "45" \
+  "0:1.35,1:2.55,2:2.10,3:2.60,4:2.25,5:1.90,6:2.45" \
+  "0:1.02,1:1.25,2:1.16,3:1.25,4:1.20,5:1.14,6:1.23" \
+  "0:45,1:80,2:70,3:80,4:70,5:60,6:75"
+
+run_variant \
+  "v7_association_recall" \
+  "0:0.75,1:0.86,2:0.48,3:0.52,4:0.52,5:0.52,6:0.60" \
+  "1.15" "1.70" "60" \
+  "0:1.55,1:2.80,2:2.30,3:2.80,4:2.40,5:2.05,6:2.65" \
+  "0:1.08,1:1.30,2:1.22,3:1.30,4:1.24,5:1.18,6:1.28" \
+  "0:50,1:90,2:75,3:90,4:75,5:65,6:85"
+
+run_variant \
+  "v8_association_precision" \
+  "0:0.75,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62" \
+  "1.05" "1.50" "45" \
+  "0:1.35,1:2.10,2:1.80,3:2.10,4:1.90,5:1.65,6:2.05" \
+  "0:1.00,1:1.16,2:1.10,3:1.16,4:1.12,5:1.08,6:1.14" \
+  "0:40,1:65,2:55,3:65,4:55,5:50,6:60"
+
+date

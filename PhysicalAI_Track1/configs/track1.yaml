@@ -1,0 +1,46 @@
+﻿data_root: /path/to/PhysicalAI-SmartSpaces
+year: 2026
+train_split: train
+val_split: val
+test_split: test
+
+submission:
+  output: runs/track1.txt
+  fps: 30
+
+classes:
+  Person: 0
+  Forklift: 1
+  NovaCarter: 2
+  Transporter: 3
+  FourierGR1T2: 4
+  AgilityDigit: 5
+  PalletTruck: 6
+
+metric:
+  iou_thresholds:
+    start: 0.05
+    stop: 0.95
+    step: 0.05
+
+pipeline:
+  detector: yolo_or_rtdetr_large
+  tracker: online_3d_kalman_with_cross_view_fusion
+  branches:
+    online_bonus:
+      uses_future_frames: false
+      uses_depth_at_test: false
+      purpose: award_focused_submission
+    geometry_supervised_rgb:
+      uses_future_frames: false
+      uses_depth_at_test: false
+      purpose: train_rgb_geometry_heads_from_3d_gt_and_calibration
+    offline_max_raw:
+      uses_future_frames: true
+      uses_depth_at_test: false
+      purpose: diagnostic_and_public_leaderboard_probe
+  sim2real:
+    use_2024_2025_data: true
+    use_validation_in_training: true
+    depth_only_for_training: false
+    rgb_only_at_test: true

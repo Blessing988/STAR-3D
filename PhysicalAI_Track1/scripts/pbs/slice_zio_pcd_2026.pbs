@@ -1,0 +1,48 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_ZIO_Slice
+#PBS -l select=1:mem=120gb:ncpus=12
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-base}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+PCD_ROOT="${PCD_ROOT:-$SCRATCH_ROOT/datasets/zio_pcd_2026}"
+OUT_DIR="${OUT_DIR:-$SCRATCH_ROOT/datasets/zio_pcd_2026_slice20}"
+SPLITS="${SPLITS:-train val}"
+SPLITS="${SPLITS//:/ }"
+VOXEL_SIZE="${VOXEL_SIZE:-20.0}"
+OVERLAP="${OVERLAP:-0.5}"
+MIN_POINTS="${MIN_POINTS:-128}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/zio_pcd}"
+
+mkdir -p "$OUT_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+if [[ "$CONDA_ENV" != "base" ]]; then
+  set +u
+  source activate "$CONDA_ENV"
+  set -u
+fi
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+echo "pcd_root=$PCD_ROOT"
+echo "out_dir=$OUT_DIR"
+echo "splits=$SPLITS"
+echo "voxel_size=$VOXEL_SIZE overlap=$OVERLAP min_points=$MIN_POINTS"
+date
+python scripts/slice_zio_pcd_2026.py \
+  --pcd-data-root "$PCD_ROOT" \
+  --out-dir "$OUT_DIR" \
+  --splits $SPLITS \
+  --voxel-size "$VOXEL_SIZE" \
+  --overlap "$OVERLAP" \
+  --min-points "$MIN_POINTS"
+date

@@ -1,0 +1,76 @@
+﻿__include__: [
+  '../../dataset/custom_detection.yml',
+  '../../runtime.yml',
+  '../include/dataloader.yml',
+  '../include/optimizer.yml',
+  '../include/dfine_hgnetv2.yml',
+]
+
+output_dir: /path/to/scratch/PhysicalAI_Track1/runs/dfine/dfine_l_960_class_balanced
+print_freq: 50
+checkpoint_freq: 4
+
+num_classes: 7
+remap_mscoco_category: False
+eval_spatial_size: [960, 960]
+
+HGNetv2:
+  name: 'B4'
+  return_idx: [1, 2, 3]
+  freeze_stem_only: True
+  freeze_at: 0
+  freeze_norm: True
+  pretrained: True
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*norm|bn).*$'
+      lr: 0.0000125
+    -
+      params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn)).*$'
+      weight_decay: 0.
+  lr: 0.00025
+  betas: [0.9, 0.999]
+  weight_decay: 0.000125
+
+epochs: 36
+
+train_dataloader:
+  dataset:
+    img_folder: /path/to/scratch/PhysicalAI_Track1/datasets/yolo_2026_stride30/images/train
+    ann_file: /path/to/scratch/PhysicalAI_Track1/datasets/yolo_2026_stride30/annotations/instances_train_class_balanced_dfine.json
+    transforms:
+      ops:
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlip}
+        - {type: Resize, size: [960, 960]}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        name: stop_epoch
+        epoch: 30
+        ops: ['RandomPhotometricDistort', 'RandomZoomOut', 'RandomIoUCrop']
+  total_batch_size: 8
+  num_workers: 8
+  collate_fn:
+    base_size: 960
+    base_size_repeat: 4
+    stop_epoch: 30
+    ema_restart_decay: 0.9999
+
+val_dataloader:
+  dataset:
+    img_folder: /path/to/scratch/PhysicalAI_Track1/datasets/yolo_2026_stride30/images/val
+    ann_file: /path/to/scratch/PhysicalAI_Track1/datasets/yolo_2026_stride30/annotations/instances_val_dfine.json
+    transforms:
+      ops:
+        - {type: Resize, size: [960, 960]}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+  total_batch_size: 16
+  num_workers: 8

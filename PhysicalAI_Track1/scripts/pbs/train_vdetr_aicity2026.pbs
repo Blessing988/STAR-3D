@@ -1,0 +1,76 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_VDETR_Train
+#PBS -l select=1:mem=160gb:ncpus=16:ngpus=1:glist=a40
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+VDETR_ROOT="${VDETR_ROOT:-$PROJECT_ROOT/external/AIC2025_Track1_ZV/V-DETR}"
+ENV_PREFIX="${ENV_PREFIX:-/path/to/conda_envs/vdetr_aic2026}"
+CONFIG="${CONFIG:-$PROJECT_ROOT/configs/vdetr_aicity2026_7cls.yaml}"
+DATASET_ROOT="${DATASET_ROOT:-/path/to/scratch/PhysicalAI_Track1/datasets/zio_pcd_2026_slice20_stride100}"
+CHECKPOINT_DIR="${CHECKPOINT_DIR:-/path/to/scratch/PhysicalAI_Track1/runs/vdetr/aicity2026_7cls_stride100}"
+EPOCHS="${EPOCHS:-20}"
+NUM_WORKERS="${NUM_WORKERS:-8}"
+NGPUS="${NGPUS:-1}"
+BASE_LR="${BASE_LR:-}"
+WARM_LR="${WARM_LR:-}"
+FINAL_LR="${FINAL_LR:-}"
+PRETRAINED_CKPT="${PRETRAINED_CKPT:-}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/vdetr}"
+
+mkdir -p "$CHECKPOINT_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+module unload gcc/15.2.0 || true
+module load cuda/11.4 || module load cuda/11.2 || true
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+set +u
+source activate "$ENV_PREFIX"
+set -u
+
+if command -v nvcc >/dev/null 2>&1; then
+  export CUDA_HOME="$(dirname "$(dirname "$(command -v nvcc)")")"
+  export CUDA_PATH="$CUDA_HOME"
+  export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+fi
+
+cd "$VDETR_ROOT"
+export PYTHONPATH="$VDETR_ROOT:$VDETR_ROOT/third_party/pointnet2:$PROJECT_ROOT/src:${PYTHONPATH:-}"
+TMP_CONFIG="$CHECKPOINT_DIR/config_runtime.yaml"
+
+python - <<'PY'
+import importlib.util
+mods = ["torch", "MinkowskiEngine", "mmcv", "plyfile", "pointnet2"]
+for mod in mods:
+    print(f"{mod}={bool(importlib.util.find_spec(mod))}")
+PY
+
+python - "$CONFIG" "$TMP_CONFIG" "$EPOCHS" "$NUM_WORKERS" "$CHECKPOINT_DIR" "$BASE_LR" "$WARM_LR" "$FINAL_LR" "$PRETRAINED_CKPT" <<'PY'
+import sys
+import yaml
+src, dst, epochs, workers, checkpoint_dir, base_lr, warm_lr, final_lr, pretrained_ckpt = sys.argv[1:10]
+with open(src, "r", encoding="utf-8") as handle:
+    cfg = yaml.safe_load(handle)
+cfg["max_epoch"] = int(epochs)
+cfg["dataset_num_workers"] = int(workers)
+cfg["checkpoint_dir"] = checkpoint_dir
+cfg["test_ckpt"] = pretrained_ckpt
+for key, value in [("base_lr", base_lr), ("warm_lr", warm_lr), ("final_lr", final_lr)]:
+    if value:
+        cfg[key] = float(value)
+with open(dst, "w", encoding="utf-8") as handle:
+    yaml.safe_dump(cfg, handle, sort_keys=False)
+print(dst)
+PY
+
+python main.py \
+  --config "$TMP_CONFIG" \
+  --dataset_root_dir "$DATASET_ROOT" \
+  --ngpus "$NGPUS"

@@ -1,0 +1,38 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Prune_VDETR
+#PBS -l select=1:mem=120gb:ncpus=8
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+INPUT="${INPUT:?INPUT is required}"
+OUT="${OUT:?OUT is required}"
+MIN_SCORE="${MIN_SCORE:-0.02}"
+ALLOWED_GROUPS="${ALLOWED_GROUPS:-0,1,2,3,4,5,6}"
+TOPK_PER_GROUP="${TOPK_PER_GROUP:-60}"
+TOPK_TOTAL="${TOPK_TOTAL:-240}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/vdetr}"
+ALLOWED_GROUPS="${ALLOWED_GROUPS//:/,}"
+
+mkdir -p "$(dirname "$OUT")" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+
+python scripts/prune_vdetr_export.py \
+  --input "$INPUT" \
+  --out "$OUT" \
+  --min-score "$MIN_SCORE" \
+  --allowed-groups "$ALLOWED_GROUPS" \
+  --topk-per-group "$TOPK_PER_GROUP" \
+  --topk-total "$TOPK_TOTAL"
+
+ls -lh "$INPUT" "$OUT" "$OUT.json"
+wc -l "$OUT"
+cat "$OUT.json"

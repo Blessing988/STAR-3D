@@ -1,0 +1,30 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_Setup_RFDETR
+#PBS -l select=1:mem=80gb:ncpus=8:ngpus=1
+#PBS -l walltime=04:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+ENV_DIR="${ENV_DIR:-/path/to/conda_envs/rfdetr}"
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/setup}"
+
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+if [[ ! -d "$ENV_DIR" ]]; then
+  conda create -y -p "$ENV_DIR" python=3.10
+fi
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate "$ENV_DIR"
+python -m pip install --upgrade pip wheel setuptools
+python -m pip install rfdetr
+python -m pip install -e "$PROJECT_ROOT"
+python - <<'PY'
+import rfdetr
+print("rfdetr", getattr(rfdetr, "__version__", "unknown"))
+PY

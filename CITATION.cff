@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+title: "STAR-3D: Association-Preserving RGB-Only Multi-Camera 3D Tracking under Sim2Real Shift"
+message: "If you use this code, please cite the STAR-3D paper."
+type: software
+authors:
+  - family-names: Agyeikyem
+    given-names: Blessing
+year: 2026
+license: MIT
+repository-code: "https://github.com/Blessing988/STAR-3D"
+keywords:
+  - multi-camera tracking
+  - 3D perception
+  - AI City Challenge
+  - Sim2Real
+  - smart spaces
+abstract: "STAR-3D is an RGB-only calibrated multi-camera 3D tracking pipeline for AI City Challenge 2026 Track 1."

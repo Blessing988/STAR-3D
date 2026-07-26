@@ -1,0 +1,140 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_YOLOv5CBAM_STAR_Val
+#PBS -l select=1:mem=120gb:ncpus=16:ngpus=1
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+YOLOV5_ROOT="${YOLOV5_ROOT:-/path/to/YOLOv5-CBAM/yolov5}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+DATASET_DIR="${DATASET_DIR:-$SCRATCH_ROOT/datasets/yolo_2026_stride30}"
+IMAGE_DIR="${IMAGE_DIR:-$DATASET_DIR/images/val}"
+MANIFEST="${MANIFEST:-$DATASET_DIR/val_frames.tsv}"
+MODEL="${MODEL:-$SCRATCH_ROOT/runs/yolov5_cbam/cbam_l_1536_stride30_class_balanced_h100_nocache/weights/best.pt}"
+IMGSZ="${IMGSZ:-1536}"
+CONF="${CONF:-0.01}"
+IOU="${IOU:-0.70}"
+MAX_DET="${MAX_DET:-500}"
+SCENES="${SCENES:-Warehouse_020 Warehouse_021 Warehouse_022}"
+MAX_FRAMES="${MAX_FRAMES:-600}"
+FRAME_STRIDE="${FRAME_STRIDE:-30}"
+RUN_NAME="${RUN_NAME:-yolov5_cbam_star_val_${PBS_JOBID:-manual}}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/inference/$RUN_NAME}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/inference}"
+FUSE_CLASS_DISTANCE_M="${FUSE_CLASS_DISTANCE_M:-0:1.2,1:2.0,6:2.5}"
+TRACK_CLASS_MIN_SCORES="${TRACK_CLASS_MIN_SCORES:-0:0.6,1:0.8,6:0.4}"
+TRACK_MIN_SCORE="${TRACK_MIN_SCORE:-0.0}"
+TRACK_MAX_COST="${TRACK_MAX_COST:-1.20}"
+TRACK_MAX_DISTANCE_M="${TRACK_MAX_DISTANCE_M:-1.8}"
+
+bind_pbs_gpu() {
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    return 0
+  fi
+  if [[ -z "${PBS_GPUFILE:-}" || ! -f "$PBS_GPUFILE" ]]; then
+    return 0
+  fi
+  local line token
+  line="$(head -1 "$PBS_GPUFILE")"
+  token="${line##*gpu}"
+  if [[ ! "$token" =~ ^[0-9]+$ ]]; then
+    token="${line##*nvidia}"
+  fi
+  if [[ ! "$token" =~ ^[0-9]+$ ]]; then
+    token="${line##*[-:[:space:]]}"
+  fi
+  if [[ "$token" =~ ^[0-9]+$ ]]; then
+    export CUDA_VISIBLE_DEVICES="$token"
+  fi
+}
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+bind_pbs_gpu
+export WANDB_MODE=disabled
+export OMP_NUM_THREADS=8
+
+date
+hostname
+echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
+nvidia-smi || true
+echo "model=$MODEL"
+echo "run_dir=$RUN_DIR"
+
+SOURCE_LIST="$RUN_DIR/source_images.txt"
+MANIFEST_FILTERED="$RUN_DIR/manifest.tsv"
+{
+  head -1 "$MANIFEST"
+  awk -F '\t' -v scenes="$SCENES" -v max_frame="$((MAX_FRAMES - 1))" '
+    BEGIN {
+      n = split(scenes, scene_arr, " ");
+      for (i = 1; i <= n; i++) keep[scene_arr[i]] = 1;
+    }
+    NR > 1 {
+      split($1, p, "/");
+      scene = p[length(p)-2];
+      if ((scene in keep) && ($2 + 0) <= max_frame) print;
+    }
+  ' "$MANIFEST"
+} > "$MANIFEST_FILTERED"
+
+awk -F '\t' -v image_dir="$IMAGE_DIR" 'NR > 1 { n=split($3,p,"/"); print image_dir "/" p[n] }' "$MANIFEST_FILTERED" > "$SOURCE_LIST"
+echo "source_images=$(wc -l < "$SOURCE_LIST")"
+head -3 "$SOURCE_LIST"
+
+cd "$YOLOV5_ROOT"
+python detect.py \
+  --weights "$MODEL" \
+  --source "$SOURCE_LIST" \
+  --data data/aicity_track1_2026_cbam.yaml \
+  --imgsz "$IMGSZ" \
+  --conf-thres "$CONF" \
+  --iou-thres "$IOU" \
+  --max-det "$MAX_DET" \
+  --device 0 \
+  --save-txt \
+  --save-conf \
+  --nosave \
+  --project "$RUN_DIR" \
+  --name yolov5_detect \
+  --exist-ok
+
+cd "$PROJECT_ROOT"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+LABELS_DIR="$RUN_DIR/yolov5_detect/labels"
+python -m physicalai_track1 import-yolo-predictions \
+  --manifest "$MANIFEST_FILTERED" \
+  --labels-dir "$LABELS_DIR" \
+  --frame-width 1920 \
+  --frame-height 1080 \
+  --min-score "$CONF" \
+  --nms-iou "$IOU" \
+  --scenes $SCENES \
+  --max-frame-id "$((MAX_FRAMES - 1))" \
+  --out "$RUN_DIR/detections.tsv"
+
+DATA_ROOT="$DATA_ROOT" \
+YEAR=2026 \
+SPLIT=val \
+DETECTIONS="$RUN_DIR/detections.tsv" \
+RUN_DIR="$RUN_DIR/star" \
+SCENES="$SCENES" \
+MAX_FRAMES="$MAX_FRAMES" \
+FRAME_STRIDE="$FRAME_STRIDE" \
+FUSE_CLASS_DISTANCE_M="$FUSE_CLASS_DISTANCE_M" \
+TRACK_CLASS_MIN_SCORES="$TRACK_CLASS_MIN_SCORES" \
+TRACK_MIN_SCORE="$TRACK_MIN_SCORE" \
+TRACK_MAX_COST="$TRACK_MAX_COST" \
+TRACK_MAX_DISTANCE_M="$TRACK_MAX_DISTANCE_M" \
+SUBMISSION_DECIMALS=6 \
+bash scripts/run_star_geometry_val.sh
+
+date

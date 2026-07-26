@@ -1,0 +1,177 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_Ensemble_Test
+#PBS -l select=1:mem=180gb:ncpus=16:ngpus=1
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+DFINE_ROOT="${DFINE_ROOT:-$PROJECT_ROOT/D-FINE}"
+DFINE_ENV="${DFINE_ENV:-/path/to/conda_envs/dfine}"
+TRACK1_ENV="${TRACK1_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+YEAR="${YEAR:-2026}"
+FRAME_STRIDE="${FRAME_STRIDE:-1}"
+DATASET_DIR="${DATASET_DIR:-$SCRATCH_ROOT/datasets/yolo_${YEAR}_test_stride${FRAME_STRIDE}}"
+IMAGE_DIR="${IMAGE_DIR:-$DATASET_DIR/images/test}"
+MANIFEST="${MANIFEST:-$DATASET_DIR/test_frames.tsv}"
+
+YOLO_DETECTIONS="${YOLO_DETECTIONS:-$SCRATCH_ROOT/runs/submissions/test_prev_best_1536_cli_h100/detections.tsv}"
+DFINE_CONFIG="${DFINE_CONFIG:-$DFINE_ROOT/configs/dfine/custom/track1_dfine_hgnetv2_l_960_class_balanced.yml}"
+DFINE_CHECKPOINT="${DFINE_CHECKPOINT:-$SCRATCH_ROOT/runs/dfine/dfine_l_960_class_balanced_168h_fixed/best_stg1.pth}"
+DFINE_INPUT_SIZE="${DFINE_INPUT_SIZE:-960}"
+DFINE_CONF="${DFINE_CONF:-0.01}"
+DFINE_IOU="${DFINE_IOU:-0.70}"
+DFINE_BATCH="${DFINE_BATCH:-8}"
+DFINE_DETECTIONS="${DFINE_DETECTIONS:-}"
+
+YOLO_WEIGHT="${YOLO_WEIGHT:-1.00}"
+DFINE_WEIGHT="${DFINE_WEIGHT:-0.90}"
+WBF_IOU="${WBF_IOU:-0.62}"
+FINAL_NMS_IOU="${FINAL_NMS_IOU:-0.80}"
+ENSEMBLE_MIN_SCORE="${ENSEMBLE_MIN_SCORE:-0.01}"
+
+FUSE_CLASS_DISTANCE_M="${FUSE_CLASS_DISTANCE_M:-0:1.2,1:2.0,6:2.5}"
+TRACK_CLASS_MIN_SCORES="${TRACK_CLASS_MIN_SCORES:-0:0.75,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62}"
+TRACK_MIN_SCORE="${TRACK_MIN_SCORE:-0.0}"
+TRACK_MAX_COST="${TRACK_MAX_COST:-1.10}"
+TRACK_MAX_DISTANCE_M="${TRACK_MAX_DISTANCE_M:-1.60}"
+
+SCENES="${SCENES:-}"
+MAX_FRAME_ID="${MAX_FRAME_ID:-}"
+RUN_NAME="${RUN_NAME:-test_ensemble_yolo_prevbest_dfine_l_${PBS_JOBID:-manual}}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+SUBMISSION_OUT="${SUBMISSION_OUT:-$RUN_DIR/track1_test_submission.txt}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+bind_pbs_gpu() {
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    return 0
+  fi
+  if [[ -z "${PBS_GPUFILE:-}" || ! -f "$PBS_GPUFILE" ]]; then
+    return 0
+  fi
+  local line token
+  line="$(head -1 "$PBS_GPUFILE")"
+  token="${line##*gpu}"
+  if [[ ! "$token" =~ ^[0-9]+$ ]]; then
+    token="${line##*nvidia}"
+  fi
+  if [[ ! "$token" =~ ^[0-9]+$ ]]; then
+    token="${line##*[-:[:space:]]}"
+  fi
+  if [[ "$token" =~ ^[0-9]+$ ]]; then
+    export CUDA_VISIBLE_DEVICES="$token"
+  fi
+}
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+date
+hostname
+echo "run_dir=$RUN_DIR"
+echo "manifest=$MANIFEST"
+echo "image_dir=$IMAGE_DIR"
+echo "yolo_detections=$YOLO_DETECTIONS"
+echo "dfine_checkpoint=$DFINE_CHECKPOINT"
+
+if [[ ! -s "$MANIFEST" ]]; then
+  echo "Missing manifest: $MANIFEST" >&2
+  exit 2
+fi
+if [[ ! -s "$YOLO_DETECTIONS" ]]; then
+  echo "Missing YOLO detections: $YOLO_DETECTIONS" >&2
+  exit 3
+fi
+if [[ ! -s "$DFINE_CHECKPOINT" ]]; then
+  echo "Missing D-FINE checkpoint: $DFINE_CHECKPOINT" >&2
+  exit 4
+fi
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+bind_pbs_gpu
+echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
+nvidia-smi || true
+
+if [[ -z "$DFINE_DETECTIONS" ]]; then
+  DFINE_DETECTIONS="$RUN_DIR/dfine_detections.tsv"
+fi
+
+if [[ ! -s "$DFINE_DETECTIONS" ]]; then
+  cd "$DFINE_ROOT"
+  source activate "$DFINE_ENV"
+  export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+  DFINE_ARGS=(python -m physicalai_track1 infer-dfine-manifest
+    --dfine-root "$DFINE_ROOT"
+    --config "$DFINE_CONFIG"
+    --checkpoint "$DFINE_CHECKPOINT"
+    --manifest "$MANIFEST"
+    --images-root "$IMAGE_DIR"
+    --input-size "$DFINE_INPUT_SIZE"
+    --confidence "$DFINE_CONF"
+    --nms-iou "$DFINE_IOU"
+    --batch-size "$DFINE_BATCH"
+    --device cuda:0
+    --out "$DFINE_DETECTIONS")
+  if [[ -n "$SCENES" ]]; then
+    DFINE_ARGS+=(--scenes $SCENES)
+  fi
+  if [[ -n "$MAX_FRAME_ID" ]]; then
+    DFINE_ARGS+=(--max-frame-id "$MAX_FRAME_ID")
+  fi
+  "${DFINE_ARGS[@]}"
+else
+  echo "Reusing existing D-FINE detections: $DFINE_DETECTIONS"
+fi
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate "$TRACK1_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+python -m physicalai_track1 ensemble-detections \
+  --inputs "$YOLO_DETECTIONS" "$DFINE_DETECTIONS" \
+  --weights "$YOLO_WEIGHT" "$DFINE_WEIGHT" \
+  --wbf-iou "$WBF_IOU" \
+  --final-nms-iou "$FINAL_NMS_IOU" \
+  --min-score "$ENSEMBLE_MIN_SCORE" \
+  --score-mode noisy_or \
+  --out "$RUN_DIR/detections_ensemble.tsv"
+
+DATA_ROOT="$DATA_ROOT" \
+YEAR="$YEAR" \
+SPLIT=test \
+DO_EVAL=0 \
+DETECTIONS="$RUN_DIR/detections_ensemble.tsv" \
+RUN_DIR="$RUN_DIR/star" \
+FUSE_CLASS_DISTANCE_M="$FUSE_CLASS_DISTANCE_M" \
+TRACK_CLASS_MIN_SCORES="$TRACK_CLASS_MIN_SCORES" \
+TRACK_MIN_SCORE="$TRACK_MIN_SCORE" \
+TRACK_MAX_COST="$TRACK_MAX_COST" \
+TRACK_MAX_DISTANCE_M="$TRACK_MAX_DISTANCE_M" \
+SUBMISSION_DECIMALS=2 \
+bash scripts/run_star_geometry_val.sh
+
+cp "$RUN_DIR/star/track1_star_online.txt" "$SUBMISSION_OUT"
+python scripts/remap_submission_ids.py \
+  --input "$SUBMISSION_OUT" \
+  --output "$RUN_DIR/track1.txt"
+python -m physicalai_track1 validate --submission "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_validate.json"
+python scripts/audit_track1_submission.py "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_audit.txt"
+(cd "$RUN_DIR" && rm -f track1.zip && zip -j track1.zip track1.txt)
+zip -j "$SUBMISSION_OUT.zip" "$SUBMISSION_OUT" || true
+
+echo "dfine_detections=$DFINE_DETECTIONS"
+echo "ensemble_detections=$RUN_DIR/detections_ensemble.tsv"
+echo "submission=$SUBMISSION_OUT"
+echo "submission_zip=$SUBMISSION_OUT.zip"
+echo "official_submission=$RUN_DIR/track1.zip"
+cat "$RUN_DIR/submission_validate.json"
+cat "$RUN_DIR/submission_audit.txt"
+date

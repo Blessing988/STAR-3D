@@ -1,0 +1,22 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_RFDETR_IntOps_Smoke
+#PBS -l select=1:mem=32gb:ncpus=4:ngpus=1:glist=h100:host=gpu0063
+#PBS -l walltime=00:10:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -j oe
+
+set -euo pipefail
+
+cd /path/to/PhysicalAI_Track1
+source activate /path/to/conda_envs/rfdetr
+
+python - <<'PY'
+import torch
+print("torch", torch.__version__, "cuda", torch.version.cuda, flush=True)
+spatial_shapes = torch.as_tensor([(56, 56), (28, 28)], dtype=torch.long, device="cuda")
+print("spatial_shapes", spatial_shapes, flush=True)
+print("prod", torch.prod(spatial_shapes, dim=1), flush=True)
+print("cumsum", torch.cumsum(torch.prod(spatial_shapes, dim=1), dim=0), flush=True)
+print("ok", flush=True)
+PY

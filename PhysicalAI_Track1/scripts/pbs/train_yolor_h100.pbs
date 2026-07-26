@@ -1,0 +1,97 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_YOLOR_H100
+#PBS -l select=1:mem=240gb:ncpus=16:ngpus=1:host=gpu0061
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+YOLOR_ROOT="${YOLOR_ROOT:-$PROJECT_ROOT/yolor}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+
+DATA_YAML="${DATA_YAML:-$SCRATCH_ROOT/datasets/yolo_2026_stride30/aicity_track1_yolor_class_balanced.yaml}"
+CFG="${CFG:-cfg/yolor_p6.cfg}"
+WEIGHTS="${WEIGHTS:-}"
+HYP="${HYP:-data/hyp.scratch.1280.yaml}"
+IMGSZ="${IMGSZ:-1280}"
+EPOCHS="${EPOCHS:-100}"
+BATCH="${BATCH:-8}"
+WORKERS="${WORKERS:-8}"
+RUN_NAME="${RUN_NAME:-yolor_p6_1280_stride30_class_balanced}"
+RUNS_ROOT="${RUNS_ROOT:-$SCRATCH_ROOT/runs/yolor}"
+
+bind_pbs_gpus() {
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    return 0
+  fi
+  if [[ -z "${PBS_GPUFILE:-}" || ! -f "$PBS_GPUFILE" ]]; then
+    return 0
+  fi
+
+  local ids
+  ids="$(
+    while IFS= read -r line; do
+      local token
+      token="${line##*gpu}"
+      if [[ "$token" =~ ^[0-9]+$ ]]; then
+        echo "$token"
+        continue
+      fi
+      token="${line##*nvidia}"
+      if [[ "$token" =~ ^[0-9]+$ ]]; then
+        echo "$token"
+        continue
+      fi
+      token="${line##*[-:[:space:]]}"
+      if [[ "$token" =~ ^[0-9]+$ ]]; then
+        echo "$token"
+      fi
+    done < "$PBS_GPUFILE" | paste -sd, -
+  )"
+
+  if [[ -n "$ids" ]]; then
+    export CUDA_VISIBLE_DEVICES="$ids"
+  fi
+}
+
+mkdir -p "$RUNS_ROOT" "$SCRATCH_ROOT/tmp/pip_cache" "$SCRATCH_ROOT/tmp/pip_tmp"
+export PIP_CACHE_DIR="$SCRATCH_ROOT/tmp/pip_cache"
+export TMPDIR="$SCRATCH_ROOT/tmp/pip_tmp"
+
+cd "$YOLOR_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+
+bind_pbs_gpus
+echo "YOLOR_ROOT=$YOLOR_ROOT"
+echo "DATA_YAML=$DATA_YAML"
+echo "CFG=$CFG"
+echo "WEIGHTS=$WEIGHTS"
+echo "RUNS_ROOT=$RUNS_ROOT"
+echo "RUN_NAME=$RUN_NAME"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+if [[ -n "${PBS_GPUFILE:-}" && -f "$PBS_GPUFILE" ]]; then
+  cat "$PBS_GPUFILE"
+fi
+nvidia-smi || true
+
+python -m pip install -q tensorboard thop pycocotools
+
+python train.py \
+  --batch-size "$BATCH" \
+  --img-size "$IMGSZ" "$IMGSZ" \
+  --data "$DATA_YAML" \
+  --cfg "$CFG" \
+  --weights "$WEIGHTS" \
+  --name "$RUN_NAME" \
+  --hyp "$HYP" \
+  --epochs "$EPOCHS" \
+  --device 0 \
+  --workers "$WORKERS" \
+  --project "$RUNS_ROOT" \
+  --exist-ok

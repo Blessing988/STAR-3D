@@ -1,0 +1,175 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_PrecisionAdaptive_Test
+#PBS -l select=1:mem=420gb:ncpus=16:ngpus=1
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+SOURCE_RUN="${SOURCE_RUN:-test_ensemble_yolo_prevbest_dfine_l_h100}"
+SOURCE_DIR="${SOURCE_DIR:-$SCRATCH_ROOT/runs/submissions/$SOURCE_RUN}"
+YOLO_DETECTIONS="${YOLO_DETECTIONS:-$SCRATCH_ROOT/runs/submissions/test_prev_best_1536_cli_h100/detections.tsv}"
+DFINE_DETECTIONS="${DFINE_DETECTIONS:-$SOURCE_DIR/dfine_detections.tsv}"
+RUN_NAME="${RUN_NAME:-test_ensemble_precision_adaptive_online}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+
+YOLO_WEIGHT="${YOLO_WEIGHT:-1.00}"
+DFINE_WEIGHT="${DFINE_WEIGHT:-0.40}"
+WBF_IOU="${WBF_IOU:-0.70}"
+FINAL_NMS_IOU="${FINAL_NMS_IOU:-0.75}"
+ENSEMBLE_MIN_SCORE="${ENSEMBLE_MIN_SCORE:-0.05}"
+YOLO_PREFILTER_SCORE="${YOLO_PREFILTER_SCORE:-0.05}"
+DFINE_PREFILTER_SCORE="${DFINE_PREFILTER_SCORE:-0.125}"
+
+FUSE_CLASS_DISTANCE_M="${FUSE_CLASS_DISTANCE_M:-0:1.2,1:2.0,6:2.5}"
+TRACK_CLASS_MIN_SCORES="${TRACK_CLASS_MIN_SCORES:-0:0.75,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62}"
+TRACK_CLASS_MAX_DISTANCES_M="${TRACK_CLASS_MAX_DISTANCES_M:-0:1.45,1:2.35,2:2.00,3:2.40,4:2.10,5:1.85,6:2.30}"
+TRACK_CLASS_MAX_COSTS="${TRACK_CLASS_MAX_COSTS:-0:1.05,1:1.22,2:1.15,3:1.22,4:1.18,5:1.12,6:1.20}"
+TRACK_CLASS_MAX_AGES="${TRACK_CLASS_MAX_AGES:-0:45,1:75,2:65,3:75,4:65,5:55,6:70}"
+TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M="${TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M:-0:0.45,1:0.90,2:0.75,3:0.90,4:0.75,5:0.65,6:0.85}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "source_dir=$SOURCE_DIR"
+echo "yolo_detections=$YOLO_DETECTIONS"
+echo "dfine_detections=$DFINE_DETECTIONS"
+echo "run_dir=$RUN_DIR"
+
+if [[ ! -s "$YOLO_DETECTIONS" ]]; then
+  echo "Missing YOLO detections: $YOLO_DETECTIONS" >&2
+  exit 2
+fi
+if [[ ! -s "$DFINE_DETECTIONS" ]]; then
+  echo "Missing D-FINE detections: $DFINE_DETECTIONS" >&2
+  exit 3
+fi
+
+FILTERED_DIR="$RUN_DIR/prefiltered"
+FILTERED_YOLO="$FILTERED_DIR/yolo_min${YOLO_PREFILTER_SCORE}.tsv"
+FILTERED_DFINE="$FILTERED_DIR/dfine_min${DFINE_PREFILTER_SCORE}.tsv"
+mkdir -p "$FILTERED_DIR"
+
+filter_detections() {
+  local input="$1"
+  local output="$2"
+  local threshold="$3"
+  if [[ -s "$output" ]]; then
+    echo "Reusing filtered detections: $output"
+    return 0
+  fi
+  local temporary="${output}.tmp"
+  rm -f "$temporary"
+  awk -F $'\t' -v OFS=$'\t' -v threshold="$threshold" \
+    'NR == 1 || ($5 + 0.0) >= threshold { print }' \
+    "$input" > "$temporary"
+  mv "$temporary" "$output"
+  echo "filtered_input=$input"
+  echo "filtered_output=$output"
+  echo "filtered_threshold=$threshold"
+  echo "filtered_lines=$(wc -l < "$output")"
+  ls -lh "$output"
+}
+
+# ensemble-detections normally filters after parsing each row. Applying the
+# mathematically equivalent source thresholds first avoids materializing over
+# 100 million low-confidence D-FINE boxes in Python.
+filter_detections "$YOLO_DETECTIONS" "$FILTERED_YOLO" "$YOLO_PREFILTER_SCORE"
+filter_detections "$DFINE_DETECTIONS" "$FILTERED_DFINE" "$DFINE_PREFILTER_SCORE"
+
+python -m physicalai_track1 ensemble-detections \
+  --inputs "$FILTERED_YOLO" "$FILTERED_DFINE" \
+  --weights "$YOLO_WEIGHT" "$DFINE_WEIGHT" \
+  --wbf-iou "$WBF_IOU" \
+  --final-nms-iou "$FINAL_NMS_IOU" \
+  --min-score "$ENSEMBLE_MIN_SCORE" \
+  --score-mode noisy_or \
+  --out "$RUN_DIR/detections_ensemble.tsv"
+
+DATA_ROOT="$DATA_ROOT" \
+YEAR=2026 \
+SPLIT=test \
+DO_EVAL=0 \
+DETECTIONS="$RUN_DIR/detections_ensemble.tsv" \
+RUN_DIR="$RUN_DIR/star" \
+FUSE_CLASS_DISTANCE_M="$FUSE_CLASS_DISTANCE_M" \
+TRACK_CLASS_MIN_SCORES="$TRACK_CLASS_MIN_SCORES" \
+TRACK_CLASS_MAX_DISTANCES_M="$TRACK_CLASS_MAX_DISTANCES_M" \
+TRACK_CLASS_MAX_COSTS="$TRACK_CLASS_MAX_COSTS" \
+TRACK_CLASS_MAX_AGES="$TRACK_CLASS_MAX_AGES" \
+TRACK_MIN_SCORE=0.0 \
+TRACK_MAX_COST=1.10 \
+TRACK_MAX_DISTANCE_M=1.60 \
+TRACK_MAX_AGE=45 \
+TRACK_CONFIRMATION_HITS=1 \
+TRACK_CONFIRMATION_MODE=confirmed_only \
+TRACK_CLASS_CONFIRMATION_HITS="0:2" \
+TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M="$TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M" \
+TRACK_DUPLICATE_BIRTH_IOU=0.05 \
+TRACK_CLASS_IMMEDIATE_BIRTH_SCORES="0:0.90" \
+SUBMISSION_DECIMALS=2 \
+bash scripts/run_star_geometry_val.sh
+
+python scripts/remap_submission_ids.py \
+  --input "$RUN_DIR/star/track1_star_online.txt" \
+  --output "$RUN_DIR/track1.txt"
+python -m physicalai_track1 validate --submission "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_validate.json"
+python scripts/audit_track1_submission.py "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_audit.txt"
+(cd "$RUN_DIR" && rm -f track1.zip && zip -j -q track1.zip track1.txt)
+
+# Keep an explicitly offline, bounded-latency diagnostic candidate from the
+# same fused detections. It must not be declared as an online method.
+OFFLINE_DIR="$RUN_DIR/offline_person_backfill"
+mkdir -p "$OFFLINE_DIR"
+python -m physicalai_track1 track-online \
+  --fused "$RUN_DIR/star/fused.tsv" \
+  --class-min-scores "$TRACK_CLASS_MIN_SCORES" \
+  --min-score 0.0 \
+  --max-cost 1.10 \
+  --max-distance-m 1.60 \
+  --max-age 45 \
+  --class-max-distances-m "$TRACK_CLASS_MAX_DISTANCES_M" \
+  --class-max-costs "$TRACK_CLASS_MAX_COSTS" \
+  --class-max-ages "$TRACK_CLASS_MAX_AGES" \
+  --distance-weight 1.0 \
+  --iou-weight 0.35 \
+  --yaw-weight 0.08 \
+  --score-weight 0.18 \
+  --source-weight 0.12 \
+  --position-alpha 0.85 \
+  --velocity-alpha 0.70 \
+  --confirmation-hits 1 \
+  --confirmation-mode backfill \
+  --class-confirmation-hits "0:2" \
+  --class-duplicate-birth-distances-m "$TRACK_CLASS_DUPLICATE_BIRTH_DISTANCES_M" \
+  --duplicate-birth-iou 0.05 \
+  --decimals 2 \
+  --out "$OFFLINE_DIR/track1_raw.txt"
+python scripts/remap_submission_ids.py \
+  --input "$OFFLINE_DIR/track1_raw.txt" \
+  --output "$OFFLINE_DIR/track1.txt"
+python -m physicalai_track1 validate --submission "$OFFLINE_DIR/track1.txt" > "$OFFLINE_DIR/submission_validate.json"
+python scripts/audit_track1_submission.py "$OFFLINE_DIR/track1.txt" > "$OFFLINE_DIR/submission_audit.txt"
+(cd "$OFFLINE_DIR" && rm -f track1.zip && zip -j -q track1.zip track1.txt)
+
+echo "online_submission=$RUN_DIR/track1.zip"
+echo "offline_diagnostic_submission=$OFFLINE_DIR/track1.zip"
+cat "$RUN_DIR/submission_validate.json"
+cat "$RUN_DIR/submission_audit.txt"
+ls -lh "$RUN_DIR/track1.txt" "$RUN_DIR/track1.zip" "$OFFLINE_DIR/track1.txt" "$OFFLINE_DIR/track1.zip"
+date

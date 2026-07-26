@@ -1,0 +1,121 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_Setup_VDETR
+#PBS -l select=1:mem=120gb:ncpus=16:ngpus=1:glist=a40
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+ZIO_ROOT="${ZIO_ROOT:-$PROJECT_ROOT/external/AIC2025_Track1_ZV}"
+VDETR_ROOT="${VDETR_ROOT:-$ZIO_ROOT/V-DETR}"
+ENV_PREFIX="${ENV_PREFIX:-/path/to/conda_envs/vdetr_aic2026}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/vdetr}"
+SCRATCH_CACHE="${SCRATCH_CACHE:-/path/to/scratch/PhysicalAI_Track1/cache/vdetr_setup}"
+CLEAN_ENV="${CLEAN_ENV:-0}"
+
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+mkdir -p "$SCRATCH_CACHE"/{tmp,pip,mim,torch,conda_pkgs}
+export TMPDIR="$SCRATCH_CACHE/tmp"
+export TEMP="$SCRATCH_CACHE/tmp"
+export TMP="$SCRATCH_CACHE/tmp"
+export PIP_CACHE_DIR="$SCRATCH_CACHE/pip"
+export MIM_CACHE_DIR="$SCRATCH_CACHE/mim"
+export TORCH_HOME="$SCRATCH_CACHE/torch"
+export CONDA_PKGS_DIRS="$SCRATCH_CACHE/conda_pkgs"
+
+cd "$PROJECT_ROOT"
+module unload gcc/15.2.0 || true
+unset GCC_EXEC_PREFIX || true
+module load cuda/11.4 || module load cuda/11.2 || true
+if command -v nvcc >/dev/null 2>&1; then
+  export CUDA_HOME="$(dirname "$(dirname "$(command -v nvcc)")")"
+  export CUDA_PATH="$CUDA_HOME"
+  export PATH="$CUDA_HOME/bin:$PATH"
+  export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+fi
+echo "CUDA_HOME=${CUDA_HOME:-unset}"
+nvcc --version || true
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+
+if [[ "$CLEAN_ENV" == "1" && -d "$ENV_PREFIX" ]]; then
+  conda env remove -y -p "$ENV_PREFIX" || true
+  rm -rf "$ENV_PREFIX"
+fi
+
+if [[ ! -d "$ENV_PREFIX" ]]; then
+  conda create -y -p "$ENV_PREFIX" python=3.8
+fi
+set +u
+source activate "$ENV_PREFIX"
+set -u
+
+python -m pip install --upgrade pip setuptools wheel
+set +u
+conda install -y -c pytorch pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.3
+conda install -y -c conda-forge openblas gcc_linux-64=9.4.0 gxx_linux-64=9.4.0
+set -u
+
+python -m pip install \
+  ninja==1.10.2.3 \
+  numpy==1.23.5 \
+  scipy \
+  scikit-learn \
+  pyyaml \
+  cython \
+  timm \
+  wandb \
+  trimesh==2.35.39 \
+  matplotlib==3.5.3 \
+  pluggy==1.0.0 \
+  plyfile==0.7.4 \
+  protobuf==4.25.2 \
+  shapely \
+  h5py \
+  opencv-python-headless==4.6.0.66 \
+  openmim
+
+mim install mmcv-full==1.6.1
+
+export CC="${CONDA_PREFIX}/bin/x86_64-conda-linux-gnu-gcc"
+export CXX="${CONDA_PREFIX}/bin/x86_64-conda-linux-gnu-g++"
+export CUDAHOSTCXX="$CXX"
+unset GCC_EXEC_PREFIX || true
+export COMPILER_PATH="${CONDA_PREFIX}/libexec/gcc/x86_64-conda-linux-gnu/9.4.0"
+export CPATH="/usr/include:${CPATH:-}"
+export C_INCLUDE_PATH="/usr/include:${C_INCLUDE_PATH:-}"
+export CPLUS_INCLUDE_PATH="/usr/include:${CPLUS_INCLUDE_PATH:-}"
+export TORCH_DONT_CHECK_COMPILER_ABI=1
+export MAX_JOBS="${MAX_JOBS:-4}"
+echo "CC=$CC"
+echo "CXX=$CXX"
+echo "COMPILER_PATH=$COMPILER_PATH"
+"$CC" --version | head -1 || true
+"$CXX" --version | head -1 || true
+"$CXX" -print-search-dirs | head -5 || true
+
+cd "$ZIO_ROOT/MinkowskiEngine"
+rm -rf build
+python setup.py install --blas_include_dirs="${CONDA_PREFIX}/include" --blas=openblas
+
+cd "$VDETR_ROOT/third_party/pointnet2"
+python setup.py install
+
+cd "$VDETR_ROOT/utils"
+python cython_compile.py build_ext --inplace
+
+cd "$VDETR_ROOT"
+python - <<'PY'
+import importlib.util
+mods = ["torch", "MinkowskiEngine", "mmcv", "plyfile", "pointnet2", "yaml", "scipy", "sklearn"]
+for mod in mods:
+    print(f"{mod}={bool(importlib.util.find_spec(mod))}")
+import torch
+print("torch", torch.__version__, torch.version.cuda, torch.cuda.is_available())
+PY

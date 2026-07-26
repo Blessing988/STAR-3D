@@ -1,0 +1,69 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_VDETR_Fuse
+#PBS -l select=1:mem=160gb:ncpus=16
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+BASE="${BASE:-$SCRATCH_ROOT/runs/submissions/test_yolo11x1920_dfine_p025_bev_gap60_cost115_v2/track1.txt}"
+VDETR="${VDETR:-$SCRATCH_ROOT/runs/vdetr_export/aicity2026_merged4_rareweighted24k_best_test_slices.tsv}"
+RUN_NAME="${RUN_NAME:-test_yolo11x1920_dfine_p025_gap60_vdetr_merged4}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+CLASS_MODE="${CLASS_MODE:-merged4}"
+ALLOWED_GROUPS="${ALLOWED_GROUPS:-0,1,2}"
+MIN_SCORE="${MIN_SCORE:-0.20}"
+VDETR_NMS_DISTANCE_M="${VDETR_NMS_DISTANCE_M:-0.75}"
+MATCH_GATE_M="${MATCH_GATE_M:-1.75}"
+MIN_TRACK_MATCHES="${MIN_TRACK_MATCHES:-2}"
+STRENGTH="${STRENGTH:-0.35}"
+MAX_OFFSET_M="${MAX_OFFSET_M:-1.25}"
+MAX_Z_OFFSET_M="${MAX_Z_OFFSET_M:-0.75}"
+MAX_LOG_SCALE="${MAX_LOG_SCALE:-0.25}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+ALLOWED_GROUPS="${ALLOWED_GROUPS//:/,}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+set +u
+source activate "$CONDA_ENV"
+set -u
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+echo "base=$BASE"
+echo "vdetr=$VDETR"
+echo "run_dir=$RUN_DIR"
+date
+
+python scripts/fuse_vdetr_track1.py \
+  --base "$BASE" \
+  --vdetr "$VDETR" \
+  --out "$RUN_DIR/track1.txt" \
+  --zip-out "$RUN_DIR/track1.zip" \
+  --class-mode "$CLASS_MODE" \
+  --allowed-groups "$ALLOWED_GROUPS" \
+  --min-score "$MIN_SCORE" \
+  --vdetr-nms-distance-m "$VDETR_NMS_DISTANCE_M" \
+  --match-gate-m "$MATCH_GATE_M" \
+  --min-track-matches "$MIN_TRACK_MATCHES" \
+  --strength "$STRENGTH" \
+  --max-offset-m "$MAX_OFFSET_M" \
+  --max-z-offset-m "$MAX_Z_OFFSET_M" \
+  --max-log-scale "$MAX_LOG_SCALE"
+
+python -m physicalai_track1 validate --submission "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_validate.json"
+python scripts/audit_track1_submission.py "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_audit.txt"
+ls -lh "$RUN_DIR"/track1.*
+cat "$RUN_DIR/track1.txt.json"
+cat "$RUN_DIR/submission_validate.json"
+cat "$RUN_DIR/submission_audit.txt"
+date

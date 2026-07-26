@@ -1,0 +1,127 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Local environments and IDEs
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+*.code-workspace
+.codex/
+.agents/
+.tmp/
+.git.broken*/
+skills-lock.json
+AGENTS.md
+
+# Secrets and local access keys
+*id_rsa*
+*id_ed25519*
+*_ed25519*
+*_key*
+*.pem
+*.ppk
+
+# LaTeX build products
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+
+# Data, checkpoints, and experiment outputs
+data/
+datasets/
+runs/
+outputs/
+artifacts/
+checkpoints/
+weights/
+models/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.npz
+*.npy
+*.h5
+*.hdf5
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+
+# Generated local reports and temporary paper assets
+results/
+submissions/
+competition_details.txt
+download_track3_data.pbs
+depth_pro_sample_*.png
+paper_assets_scene25.zip
+eccv_paper/paper_assets_scene25/
+eccv_paper/paper_assets_scene25.zip
+eccv_paper/sample papers/
+eccv_paper/sample 2025 aicity papers/
+eccv_paper/tmp_sample_pages/
+eccv_paper/tmp_sample_text/
+eccv_paper/paper-template-Latest/ECCV-paper-template/.miktex/
+eccv_paper/paper-template-Latest/ECCV-paper-template/.miktex_codex_tmp_*/
+eccv_paper/paper-template-Latest/ECCV-paper-template/main.pdf
+eccv_paper/paper-template-Latest/ECCV-paper-template/ECCV_2026_Paper_Template.pdf
+eccv_paper/paper-template-Latest/ECCV-paper-template/llncsdoc.pdf
+eccv_paper/paper-template-Latest/ECCV-paper-template/eijkel2.pdf
+eccv_paper/paper-template-Latest/ECCV-paper-template/eijkel2.eps
+
+# Keep final paper figures, ignore transient failed transfers.
+eccv_paper/paper-template-Latest/ECCV-paper-template/figures/qual_multiview_scene25_frame3000.png
+
+# Cloned third-party repositories used for analysis/adaptation.
+external_repos/
+PhysicalAI_Track1/external/
+
+# HPC and scheduler logs
+*.o[0-9]*
+*.e[0-9]*
+*.pbs.log
+*.pbs.err
+*.latest
+*_latest.txt
+PhysicalAI_Track1/hpc_training_audit*.txt
+PhysicalAI_Track1/submit_yolo_time0_latest.txt
+PhysicalAI_Track1/reports/
+PhysicalAI_Track1/scripts/check_hpc_trainings.ps1
+PhysicalAI_Track1/scripts/setup_ssh_and_submit_yolo_time0.ps1
+PhysicalAI_Track1/scripts/hpc/prime_ssh.ps1
+PhysicalAI_Track1/scripts/hpc/start_prime_ssh_master.ps1
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

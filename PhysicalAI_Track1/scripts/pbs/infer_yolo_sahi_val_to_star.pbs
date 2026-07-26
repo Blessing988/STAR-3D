@@ -1,0 +1,114 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_YOLO_SAHI_Val
+#PBS -l select=1:mem=140gb:ncpus=16:ngpus=1
+#PBS -l walltime=48:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATASET_DIR="${DATASET_DIR:-$SCRATCH_ROOT/datasets/yolo_2026_stride30}"
+IMAGE_DIR="${IMAGE_DIR:-$DATASET_DIR/images/val}"
+MANIFEST="${MANIFEST:-$DATASET_DIR/val_frames.tsv}"
+MODEL="${MODEL:-$SCRATCH_ROOT/runs/detector/yolo26x_1536_2xh100_stride30_class_balanced_from_e1_ncclsafe/weights/best.pt}"
+IMGSZ="${IMGSZ:-960}"
+CONF="${CONF:-0.01}"
+IOU="${IOU:-0.70}"
+MAX_DET="${MAX_DET:-300}"
+BATCH="${BATCH:-8}"
+TILE_SIZE="${TILE_SIZE:-960}"
+TILE_OVERLAP="${TILE_OVERLAP:-0.20}"
+TILE_FULL_IMAGE="${TILE_FULL_IMAGE:-1}"
+SCENES="${SCENES:-Warehouse_020 Warehouse_021 Warehouse_022}"
+MAX_FRAMES="${MAX_FRAMES:-600}"
+FRAME_STRIDE="${FRAME_STRIDE:-30}"
+RUN_NAME="${RUN_NAME:-yolo_sahi_star_val_${PBS_JOBID:-manual}}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/inference/$RUN_NAME}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/inference}"
+FUSE_CLASS_DISTANCE_M="${FUSE_CLASS_DISTANCE_M:-0:1.2,1:2.0,6:2.5}"
+TRACK_CLASS_MIN_SCORES="${TRACK_CLASS_MIN_SCORES:-0:0.6,1:0.8,6:0.4}"
+TRACK_MIN_SCORE="${TRACK_MIN_SCORE:-0.0}"
+TRACK_MAX_COST="${TRACK_MAX_COST:-1.20}"
+TRACK_MAX_DISTANCE_M="${TRACK_MAX_DISTANCE_M:-1.8}"
+
+bind_pbs_gpu() {
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    return 0
+  fi
+  if [[ -z "${PBS_GPUFILE:-}" || ! -f "$PBS_GPUFILE" ]]; then
+    return 0
+  fi
+  local line token
+  line="$(head -1 "$PBS_GPUFILE")"
+  token="${line##*gpu}"
+  if [[ ! "$token" =~ ^[0-9]+$ ]]; then
+    token="${line##*nvidia}"
+  fi
+  if [[ ! "$token" =~ ^[0-9]+$ ]]; then
+    token="${line##*[-:[:space:]]}"
+  fi
+  if [[ "$token" =~ ^[0-9]+$ ]]; then
+    export CUDA_VISIBLE_DEVICES="$token"
+  fi
+}
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+bind_pbs_gpu
+
+date
+hostname
+echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
+nvidia-smi || true
+echo "model=$MODEL"
+echo "image_dir=$IMAGE_DIR"
+echo "run_dir=$RUN_DIR"
+echo "imgsz=$IMGSZ tile_size=$TILE_SIZE tile_overlap=$TILE_OVERLAP tile_full_image=$TILE_FULL_IMAGE"
+
+tile_full_arg="--tile-full-image"
+if [[ "$TILE_FULL_IMAGE" == "0" ]]; then
+  tile_full_arg="--no-tile-full-image"
+fi
+
+python -m physicalai_track1 infer-yolo-manifest \
+  --model "$MODEL" \
+  --manifest "$MANIFEST" \
+  --images-root "$IMAGE_DIR" \
+  --imgsz "$IMGSZ" \
+  --confidence "$CONF" \
+  --model-iou "$IOU" \
+  --post-nms-iou "$IOU" \
+  --max-det "$MAX_DET" \
+  --batch-size "$BATCH" \
+  --device 0 \
+  --scenes $SCENES \
+  --max-frame-id "$((MAX_FRAMES - 1))" \
+  --tile-size "$TILE_SIZE" \
+  --tile-overlap "$TILE_OVERLAP" \
+  "$tile_full_arg" \
+  --out "$RUN_DIR/detections.tsv"
+
+DETECTIONS="$RUN_DIR/detections.tsv" \
+RUN_DIR="$RUN_DIR/star" \
+SCENES="$SCENES" \
+MAX_FRAMES="$MAX_FRAMES" \
+FRAME_STRIDE="$FRAME_STRIDE" \
+FUSE_CLASS_DISTANCE_M="$FUSE_CLASS_DISTANCE_M" \
+TRACK_CLASS_MIN_SCORES="$TRACK_CLASS_MIN_SCORES" \
+TRACK_MIN_SCORE="$TRACK_MIN_SCORE" \
+TRACK_MAX_COST="$TRACK_MAX_COST" \
+TRACK_MAX_DISTANCE_M="$TRACK_MAX_DISTANCE_M" \
+SUBMISSION_DECIMALS=6 \
+bash scripts/run_star_geometry_val.sh
+
+date

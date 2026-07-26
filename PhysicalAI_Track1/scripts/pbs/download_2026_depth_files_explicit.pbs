@@ -1,0 +1,48 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Depth_Explicit
+#PBS -l select=1:mem=32gb:ncpus=4
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+REPO_ID="${REPO_ID:-nvidia/PhysicalAI-SmartSpaces}"
+LOCAL_DIR="${LOCAL_DIR:-/path/to/PhysicalAI-SmartSpaces}"
+SCENES="${SCENES:-train/Warehouse_004}"
+WORKERS="${WORKERS:-1}"
+RETRIES="${RETRIES:-8}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-30}"
+HF_TRANSFER="${HF_TRANSFER:-1}"
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+export HF_HOME="${HF_HOME:-/path/to/scratch/PhysicalAI_Track1/tmp/hf_home}"
+export HF_HUB_ENABLE_HF_TRANSFER="$HF_TRANSFER"
+if [[ -n "${HF_TOKEN:-}" ]]; then
+  export HUGGING_FACE_HUB_TOKEN="$HF_TOKEN"
+fi
+mkdir -p "$HF_HOME" "$LOCAL_DIR"
+
+echo "repo_id=$REPO_ID"
+echo "local_dir=$LOCAL_DIR"
+echo "scenes=$SCENES"
+echo "workers=$WORKERS"
+echo "retries=$RETRIES"
+echo "hf_home=$HF_HOME"
+date
+
+python scripts/download_depth_files.py \
+  --repo-id "$REPO_ID" \
+  --local-dir "$LOCAL_DIR" \
+  --scenes "$SCENES" \
+  --workers "$WORKERS" \
+  --retries "$RETRIES" \
+  --sleep-seconds "$SLEEP_SECONDS"
+
+date

@@ -1,0 +1,47 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_DepthPro_PNG
+#PBS -l select=1:mem=40gb:ncpus=8
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+ENV_PREFIX="${ENV_PREFIX:-/path/to/conda_envs/depth_pro}"
+IN_ROOT="${IN_ROOT:-/path/to/scratch/PhysicalAI_Track1/depth_estimates/depth_pro_2026_stride300_1536}"
+OUT_ROOT="${OUT_ROOT:-/path/to/scratch/PhysicalAI_Track1/depth_estimates/depth_pro_2026_stride300_1536_png}"
+SPLITS="${SPLITS:-train val test}"
+MAKE_COLOR="${MAKE_COLOR:-1}"
+LIMIT="${LIMIT:-}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/depth_pro}"
+
+mkdir -p "$LOG_DIR" "$OUT_ROOT"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+set +u
+source activate "$ENV_PREFIX"
+set -u
+
+cd "$PROJECT_ROOT"
+
+SPLITS_ARGS="${SPLITS//+/ }"
+SPLITS_ARGS="${SPLITS_ARGS//,/ }"
+
+cmd=(python scripts/export_depth_pro_pngs.py
+  --in-root "$IN_ROOT"
+  --out-root "$OUT_ROOT"
+  --splits $SPLITS_ARGS)
+
+if [[ "$MAKE_COLOR" == "1" ]]; then
+  cmd+=(--make-color)
+fi
+if [[ -n "$LIMIT" ]]; then
+  cmd+=(--limit "$LIMIT")
+fi
+
+echo "${cmd[@]}"
+"${cmd[@]}"

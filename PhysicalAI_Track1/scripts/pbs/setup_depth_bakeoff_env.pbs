@@ -1,0 +1,66 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_Setup_DepthBakeoff
+#PBS -l select=1:mem=100gb:ncpus=12:ngpus=1:glist=h100
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+ENV_PREFIX="${ENV_PREFIX:-/path/to/conda_envs/depth_bakeoff}"
+UNIDEPTH_ROOT="${UNIDEPTH_ROOT:-$PROJECT_ROOT/external/UniDepth}"
+METRIC3D_ROOT="${METRIC3D_ROOT:-$PROJECT_ROOT/external/Metric3D}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/depth_bakeoff}"
+CACHE_ROOT="${CACHE_ROOT:-/path/to/scratch/PhysicalAI_Track1/cache/depth_bakeoff}"
+
+mkdir -p "$LOG_DIR" "$CACHE_ROOT"/{tmp,pip,torch,hf,conda_pkgs}
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+export TMPDIR="$CACHE_ROOT/tmp"
+export TEMP="$CACHE_ROOT/tmp"
+export TMP="$CACHE_ROOT/tmp"
+export PIP_CACHE_DIR="$CACHE_ROOT/pip"
+export TORCH_HOME="$CACHE_ROOT/torch"
+export HF_HOME="$CACHE_ROOT/hf"
+export HF_HUB_CACHE="$CACHE_ROOT/hf/hub"
+export CONDA_PKGS_DIRS="$CACHE_ROOT/conda_pkgs"
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+if [[ ! -d "$ENV_PREFIX" ]]; then
+  conda create -y -p "$ENV_PREFIX" python=3.10
+fi
+set +u
+source activate "$ENV_PREFIX"
+set -u
+
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+python -m pip install opencv-python-headless pillow numpy scipy tqdm matplotlib huggingface-hub safetensors einops timm h5py tabulate termcolor protobuf pandas wandb tables
+python -m pip install mmengine mmcv-lite addict yapf tensorboardX iopath plyfile imgaug imagecorruptions
+
+mkdir -p "$PROJECT_ROOT/external"
+if [[ ! -d "$UNIDEPTH_ROOT/.git" ]]; then
+  git clone https://github.com/lpiccinelli-eth/UniDepth.git "$UNIDEPTH_ROOT"
+fi
+if [[ ! -d "$METRIC3D_ROOT/.git" ]]; then
+  git clone https://github.com/YvanYin/Metric3D.git "$METRIC3D_ROOT"
+fi
+
+cd "$UNIDEPTH_ROOT"
+python -m pip install -e . --no-deps
+
+cd "$PROJECT_ROOT"
+python - <<'PY'
+import torch
+print("torch", torch.__version__, "cuda", torch.cuda.is_available())
+from unidepth.models import UniDepthV2
+print("unidepth_import_ok", UniDepthV2.__name__)
+try:
+    import mmengine
+    print("mmengine_import_ok", mmengine.__version__)
+except Exception as exc:
+    print("mmengine_import_failed", repr(exc))
+PY

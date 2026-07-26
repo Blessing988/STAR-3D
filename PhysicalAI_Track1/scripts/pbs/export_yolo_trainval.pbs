@@ -1,0 +1,45 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_Prepare_YOLO_Labels
+#PBS -l select=1:mem=100gb:ncpus=16
+#PBS -l walltime=12:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+FRAME_STRIDE="${FRAME_STRIDE:-30}"
+MIN_BOX_AREA="${MIN_BOX_AREA:-16}"
+OUT_DIR="${OUT_DIR:-$SCRATCH_ROOT/datasets/yolo_2026_stride${FRAME_STRIDE}}"
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+python -m physicalai_track1 export-yolo \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split train \
+  --frame-stride "$FRAME_STRIDE" \
+  --min-box-area "$MIN_BOX_AREA" \
+  --output-dir "$OUT_DIR"
+
+python -m physicalai_track1 export-yolo \
+  --data-root "$DATA_ROOT" \
+  --year 2026 \
+  --split val \
+  --frame-stride "$FRAME_STRIDE" \
+  --min-box-area "$MIN_BOX_AREA" \
+  --output-dir "$OUT_DIR"
+
+wc -l "$OUT_DIR/train_frames.tsv" "$OUT_DIR/val_frames.tsv"
+du -sh "$OUT_DIR" || true
+mkdir -p "$PROJECT_ROOT/runs"
+ln -sfn "$OUT_DIR" "$PROJECT_ROOT/runs/yolo_2026_stride${FRAME_STRIDE}"
+echo "Labels/manifests are ready. Extract frames with scripts/pbs/extract_yolo_frames.pbs after reviewing manifest sizes."

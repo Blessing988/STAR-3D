@@ -1,0 +1,90 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_TrackletStab_Val
+#PBS -l select=1:mem=120gb:ncpus=16
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+DETECTIONS="${DETECTIONS:-$SCRATCH_ROOT/runs/inference/ensemble_yolo_dfine_val_692702.bright04/detections_ensemble.tsv}"
+RUN_NAME="${RUN_NAME:-tracklet_stabilized_val_${PBS_JOBID:-manual}}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/inference/$RUN_NAME}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/inference}"
+
+SCENES="${SCENES:-Warehouse_020 Warehouse_021 Warehouse_022}"
+MAX_FRAMES="${MAX_FRAMES:-600}"
+FRAME_STRIDE="${FRAME_STRIDE:-30}"
+
+STAB_MIN_IOU="${STAB_MIN_IOU:-0.18}"
+STAB_CENTER_GATE="${STAB_CENTER_GATE:-0.90}"
+STAB_MAX_GAP_FRAMES="${STAB_MAX_GAP_FRAMES:-60}"
+STAB_SMOOTHING_ALPHA="${STAB_SMOOTHING_ALPHA:-0.85}"
+STAB_VELOCITY_ALPHA="${STAB_VELOCITY_ALPHA:-0.55}"
+STAB_MIN_HITS="${STAB_MIN_HITS:-2}"
+STAB_BRIDGE_MAX_GAP_FRAMES="${STAB_BRIDGE_MAX_GAP_FRAMES:-60}"
+STAB_BRIDGE_MIN_SCORE="${STAB_BRIDGE_MIN_SCORE:-0.45}"
+STAB_BRIDGE_SCORE_DECAY="${STAB_BRIDGE_SCORE_DECAY:-0.75}"
+STAB_FRAME_STEP="${STAB_FRAME_STEP:-$FRAME_STRIDE}"
+STAB_FINAL_NMS_IOU="${STAB_FINAL_NMS_IOU:-0.80}"
+
+FUSE_CLASS_DISTANCE_M="${FUSE_CLASS_DISTANCE_M:-0:1.2,1:2.0,6:2.5}"
+TRACK_CLASS_MIN_SCORES="${TRACK_CLASS_MIN_SCORES:-0:0.75,1:0.88,2:0.50,3:0.55,4:0.55,5:0.55,6:0.62}"
+TRACK_MAX_COST="${TRACK_MAX_COST:-1.10}"
+TRACK_MAX_DISTANCE_M="${TRACK_MAX_DISTANCE_M:-1.60}"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+date
+hostname
+echo "detections=$DETECTIONS"
+echo "run_dir=$RUN_DIR"
+
+if [[ ! -s "$DETECTIONS" ]]; then
+  echo "Missing detections: $DETECTIONS" >&2
+  exit 2
+fi
+
+python -m physicalai_track1 stabilize-detections \
+  --input "$DETECTIONS" \
+  --out "$RUN_DIR/detections_stabilized.tsv" \
+  --min-iou "$STAB_MIN_IOU" \
+  --center-gate "$STAB_CENTER_GATE" \
+  --max-gap-frames "$STAB_MAX_GAP_FRAMES" \
+  --smoothing-alpha "$STAB_SMOOTHING_ALPHA" \
+  --velocity-alpha "$STAB_VELOCITY_ALPHA" \
+  --min-hits-for-smoothing "$STAB_MIN_HITS" \
+  --bridge-max-gap-frames "$STAB_BRIDGE_MAX_GAP_FRAMES" \
+  --bridge-min-score "$STAB_BRIDGE_MIN_SCORE" \
+  --bridge-score-decay "$STAB_BRIDGE_SCORE_DECAY" \
+  --frame-step "$STAB_FRAME_STEP" \
+  --final-nms-iou "$STAB_FINAL_NMS_IOU"
+
+DATA_ROOT="$DATA_ROOT" \
+DETECTIONS="$RUN_DIR/detections_stabilized.tsv" \
+RUN_DIR="$RUN_DIR/star" \
+SPLIT=val \
+SCENES="$SCENES" \
+MAX_FRAMES="$MAX_FRAMES" \
+FRAME_STRIDE="$FRAME_STRIDE" \
+FUSE_CLASS_DISTANCE_M="$FUSE_CLASS_DISTANCE_M" \
+TRACK_CLASS_MIN_SCORES="$TRACK_CLASS_MIN_SCORES" \
+TRACK_MIN_SCORE=0.0 \
+TRACK_MAX_COST="$TRACK_MAX_COST" \
+TRACK_MAX_DISTANCE_M="$TRACK_MAX_DISTANCE_M" \
+SUBMISSION_DECIMALS=6 \
+bash scripts/run_star_geometry_val.sh
+
+date

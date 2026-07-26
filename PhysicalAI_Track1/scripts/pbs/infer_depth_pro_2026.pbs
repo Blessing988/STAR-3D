@@ -1,0 +1,60 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_DepthPro_EstRGB
+#PBS -l select=1:mem=100gb:ncpus=12:ngpus=1:glist=h100
+#PBS -l walltime=168:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+DATASET_ROOT="${DATASET_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+ENV_PREFIX="${ENV_PREFIX:-/path/to/conda_envs/depth_pro}"
+DEPTH_PRO_ROOT="${DEPTH_PRO_ROOT:-$PROJECT_ROOT/external/ml-depth-pro}"
+OUT_DIR="${OUT_DIR:-/path/to/scratch/PhysicalAI_Track1/depth_estimates/depth_pro_2026_stride300_1536}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/depth_pro}"
+SPLITS="${SPLITS:-train val test}"
+SCENES="${SCENES:-}"
+FRAME_STRIDE="${FRAME_STRIDE:-300}"
+MAX_FRAMES="${MAX_FRAMES:-}"
+RESIZE_MAX_SIDE="${RESIZE_MAX_SIDE:-1536}"
+USE_CALIBRATION_FOCAL="${USE_CALIBRATION_FOCAL:-0}"
+
+mkdir -p "$LOG_DIR" "$OUT_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+set +u
+source activate "$ENV_PREFIX"
+set -u
+
+cd "$PROJECT_ROOT"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+SPLITS_ARGS="${SPLITS//+/ }"
+SPLITS_ARGS="${SPLITS_ARGS//,/ }"
+SCENES_ARGS="${SCENES//+/ }"
+SCENES_ARGS="${SCENES_ARGS//,/ }"
+
+cmd=(python scripts/estimate_depth_pro_2026.py
+  --dataset-root "$DATASET_ROOT"
+  --out-dir "$OUT_DIR"
+  --depth-pro-root "$DEPTH_PRO_ROOT"
+  --frame-stride "$FRAME_STRIDE"
+  --resize-max-side "$RESIZE_MAX_SIDE"
+  --splits $SPLITS_ARGS)
+
+if [[ "$USE_CALIBRATION_FOCAL" == "1" || "$USE_CALIBRATION_FOCAL" == "true" || "$USE_CALIBRATION_FOCAL" == "TRUE" ]]; then
+  cmd+=(--use-calibration-focal)
+fi
+if [[ -n "$MAX_FRAMES" ]]; then
+  cmd+=(--max-frames "$MAX_FRAMES")
+fi
+if [[ -n "$SCENES" ]]; then
+  cmd+=(--scenes $SCENES_ARGS)
+fi
+
+echo "${cmd[@]}"
+"${cmd[@]}"

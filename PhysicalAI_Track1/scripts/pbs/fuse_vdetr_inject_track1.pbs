@@ -1,0 +1,100 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_VDETR_Inject
+#PBS -l select=1:mem=160gb:ncpus=16
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+BASE="${BASE:?BASE is required}"
+VDETR="${VDETR:?VDETR is required}"
+RUN_NAME="${RUN_NAME:?RUN_NAME is required}"
+RUN_DIR="${RUN_DIR:-$SCRATCH_ROOT/runs/submissions/$RUN_NAME}"
+CLASS_MODE="${CLASS_MODE:-merged4}"
+ALLOWED_GROUPS="${ALLOWED_GROUPS:-0,1,2}"
+INJECT_GROUPS="${INJECT_GROUPS:-0,1}"
+MIN_SCORE="${MIN_SCORE:-0.025}"
+VDETR_NMS_DISTANCE_M="${VDETR_NMS_DISTANCE_M:-0.75}"
+VDETR_FRAME_TOPK_PER_GROUP="${VDETR_FRAME_TOPK_PER_GROUP:-80}"
+VDETR_FRAME_TOPK_TOTAL="${VDETR_FRAME_TOPK_TOTAL:-320}"
+MATCH_GATE_M="${MATCH_GATE_M:-1.50}"
+MATCH_Z_GATE_M="${MATCH_Z_GATE_M:-2.0}"
+MIN_TRACK_MATCHES="${MIN_TRACK_MATCHES:-3}"
+CORRECTION_STRENGTH="${CORRECTION_STRENGTH:-0.05}"
+CENTER_ONLY_CORRECTION="${CENTER_ONLY_CORRECTION:-1}"
+MAX_OFFSET_M="${MAX_OFFSET_M:-0.70}"
+MAX_Z_OFFSET_M="${MAX_Z_OFFSET_M:-0.40}"
+MAX_LOG_SCALE="${MAX_LOG_SCALE:-0.12}"
+INJECT_MIN_SCORE="${INJECT_MIN_SCORE:-0.04}"
+INJECT_TRACK_GATE_M="${INJECT_TRACK_GATE_M:-1.50}"
+INJECT_MAX_TRACK_GAP="${INJECT_MAX_TRACK_GAP:-45}"
+INJECT_MIN_TRACK_HITS="${INJECT_MIN_TRACK_HITS:-2}"
+INJECT_INTERPOLATE_GAP="${INJECT_INTERPOLATE_GAP:-30}"
+INJECT_WITHOUT_BASE_FRAME="${INJECT_WITHOUT_BASE_FRAME:-0}"
+DEFAULT_VEHICLE_CLASS="${DEFAULT_VEHICLE_CLASS:-6}"
+SCENE_OFFSET="${SCENE_OFFSET:-0}"
+LOG_DIR="${LOG_DIR:-$SCRATCH_ROOT/logs/submissions}"
+ALLOWED_GROUPS="${ALLOWED_GROUPS//:/,}"
+INJECT_GROUPS="${INJECT_GROUPS//:/,}"
+if [[ "$INJECT_GROUPS" == "none" ]]; then
+  INJECT_GROUPS=""
+fi
+
+mkdir -p "$RUN_DIR" "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+set +u
+source activate "$CONDA_ENV"
+set -u
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+cmd=(python scripts/fuse_vdetr_inject_track1.py
+  --base "$BASE"
+  --vdetr "$VDETR"
+  --out "$RUN_DIR/track1.txt"
+  --zip-out "$RUN_DIR/track1.zip"
+  --class-mode "$CLASS_MODE"
+  --allowed-groups "$ALLOWED_GROUPS"
+  --inject-groups "$INJECT_GROUPS"
+  --default-vehicle-class "$DEFAULT_VEHICLE_CLASS"
+  --min-score "$MIN_SCORE"
+  --vdetr-nms-distance-m "$VDETR_NMS_DISTANCE_M"
+  --vdetr-frame-topk-per-group "$VDETR_FRAME_TOPK_PER_GROUP"
+  --vdetr-frame-topk-total "$VDETR_FRAME_TOPK_TOTAL"
+  --match-gate-m "$MATCH_GATE_M"
+  --match-z-gate-m "$MATCH_Z_GATE_M"
+  --min-track-matches "$MIN_TRACK_MATCHES"
+  --correction-strength "$CORRECTION_STRENGTH"
+  --max-offset-m "$MAX_OFFSET_M"
+  --max-z-offset-m "$MAX_Z_OFFSET_M"
+  --max-log-scale "$MAX_LOG_SCALE"
+  --inject-min-score "$INJECT_MIN_SCORE"
+  --inject-track-gate-m "$INJECT_TRACK_GATE_M"
+  --inject-max-track-gap "$INJECT_MAX_TRACK_GAP"
+  --inject-min-track-hits "$INJECT_MIN_TRACK_HITS"
+  --inject-interpolate-gap "$INJECT_INTERPOLATE_GAP"
+  --scene-offset "$SCENE_OFFSET")
+
+if [[ "$CENTER_ONLY_CORRECTION" == "1" ]]; then
+  cmd+=(--center-only-correction)
+fi
+if [[ "$INJECT_WITHOUT_BASE_FRAME" == "1" ]]; then
+  cmd+=(--inject-without-base-frame)
+fi
+
+echo "${cmd[@]}"
+"${cmd[@]}"
+python -m physicalai_track1 validate --submission "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_validate.json"
+python scripts/audit_track1_submission.py "$RUN_DIR/track1.txt" > "$RUN_DIR/submission_audit.txt"
+ls -lh "$RUN_DIR"/track1.*
+cat "$RUN_DIR/track1.txt.json"
+cat "$RUN_DIR/submission_validate.json"
+cat "$RUN_DIR/submission_audit.txt"

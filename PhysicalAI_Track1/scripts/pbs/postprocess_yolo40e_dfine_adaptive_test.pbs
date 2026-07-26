@@ -1,0 +1,20 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_YOLO40E_DFINE_Adaptive
+#PBS -l select=1:mem=420gb:ncpus=16:ngpus=1
+#PBS -l walltime=24:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+SCRIPT_DIR="${SCRIPT_DIR:-/path/to/PhysicalAI_Track1/scripts/pbs}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+
+export SOURCE_RUN="${SOURCE_RUN:-test_ensemble_yolo_prevbest_dfine_l_h100}"
+export YOLO_DETECTIONS="${YOLO_DETECTIONS:-$SCRATCH_ROOT/runs/submissions/test_yolo40e_1536_official/detections.tsv}"
+export DFINE_DETECTIONS="${DFINE_DETECTIONS:-$SCRATCH_ROOT/runs/submissions/$SOURCE_RUN/dfine_detections.tsv}"
+export RUN_NAME="${RUN_NAME:-test_yolo40e_dfine_precision_adaptive_online}"
+
+exec bash "$SCRIPT_DIR/postprocess_ensemble_precision_adaptive_test.pbs"

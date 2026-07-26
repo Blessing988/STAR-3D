@@ -1,0 +1,40 @@
+﻿#!/bin/bash
+#PBS -q gpus
+#PBS -N Track1_YOLO_Gpus
+#PBS -l select=1:mem=180gb:ncpus=24:ngpus=1
+#PBS -l walltime=72:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+CONDA_ENV="${CONDA_ENV:-/path/to/conda_envs/physicalai_track1_detector}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/path/to/scratch/PhysicalAI_Track1}"
+DATA_YAML="${DATA_YAML:-$SCRATCH_ROOT/datasets/yolo_2026_stride30/aicity_track1_2026.yaml}"
+MODEL="${MODEL:-yolo11x.pt}"
+IMGSZ="${IMGSZ:-1280}"
+EPOCHS="${EPOCHS:-80}"
+BATCH="${BATCH:--1}"
+RUN_NAME="${RUN_NAME:-yolo11x_1280_stride30}"
+RUNS_ROOT="${RUNS_ROOT:-$SCRATCH_ROOT/runs/detector}"
+
+cd "$PROJECT_ROOT"
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base || true
+source activate "$CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}"
+
+nvidia-smi || true
+
+yolo detect train \
+  model="$MODEL" \
+  data="$DATA_YAML" \
+  imgsz="$IMGSZ" \
+  epochs="$EPOCHS" \
+  batch="$BATCH" \
+  device=0 \
+  workers=12 \
+  project="$RUNS_ROOT" \
+  name="$RUN_NAME" \
+  exist_ok=True

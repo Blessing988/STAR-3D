@@ -1,0 +1,58 @@
+﻿#!/bin/bash
+#PBS -q preemptible
+#PBS -N Track1_DepthPro_PCD
+#PBS -l select=1:mem=160gb:ncpus=16
+#PBS -l walltime=48:00:00
+#PBS -W group_list=x-ccast-prj-your-group
+#PBS -M your.email@example.com
+#PBS -j oe
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/path/to/PhysicalAI_Track1}"
+DATA_ROOT="${DATA_ROOT:-/path/to/PhysicalAI-SmartSpaces}"
+DEPTH_ROOT="${DEPTH_ROOT:-/path/to/scratch/PhysicalAI_Track1/depth_estimates/depth_pro_2026_val_stride30_1536}"
+OUT_DIR="${OUT_DIR:-/path/to/scratch/PhysicalAI_Track1/depth_estimates/zio_pcd_depthpro_val_stride30}"
+ENV_PREFIX="${ENV_PREFIX:-/path/to/conda_envs/vdetr_aic2026}"
+SPLITS="${SPLITS:-val}"
+SCENES="${SCENES:-}"
+FRAME_STRIDE="${FRAME_STRIDE:-30}"
+MAX_FRAMES="${MAX_FRAMES:-}"
+PIXEL_STRIDE="${PIXEL_STRIDE:-4}"
+VOXEL_SIZE="${VOXEL_SIZE:-0.03}"
+LOG_DIR="${LOG_DIR:-/path/to/scratch/PhysicalAI_Track1/logs/depth_pro}"
+
+mkdir -p "$LOG_DIR" "$OUT_DIR"
+exec > >(tee -a "$LOG_DIR/${PBS_JOBNAME}.${PBS_JOBID}.log") 2>&1
+
+source /mmfs1/apps/pyenvs/anaconda3-2022.05/bin/activate base
+set +u
+source activate "$ENV_PREFIX"
+set -u
+
+cd "$PROJECT_ROOT"
+export PYTHONPATH="$PROJECT_ROOT/src:$PROJECT_ROOT/scripts:${PYTHONPATH:-}"
+
+SPLITS_ARGS="${SPLITS//+/ }"
+SPLITS_ARGS="${SPLITS_ARGS//,/ }"
+SCENES_ARGS="${SCENES//+/ }"
+SCENES_ARGS="${SCENES_ARGS//,/ }"
+
+cmd=(python scripts/generate_zio_pcd_from_depth_pro_2026.py
+  --data-root "$DATA_ROOT"
+  --depth-root "$DEPTH_ROOT"
+  --out-dir "$OUT_DIR"
+  --splits $SPLITS_ARGS
+  --frame-stride "$FRAME_STRIDE"
+  --pixel-stride "$PIXEL_STRIDE"
+  --voxel-size "$VOXEL_SIZE")
+
+if [[ -n "$SCENES" ]]; then
+  cmd+=(--scenes $SCENES_ARGS)
+fi
+if [[ -n "$MAX_FRAMES" ]]; then
+  cmd+=(--max-frames "$MAX_FRAMES")
+fi
+
+echo "${cmd[@]}"
+"${cmd[@]}"
