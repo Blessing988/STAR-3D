@@ -38,16 +38,11 @@ calibration, BEV relinking, class-hybrid correction, and depth-based variants in
 
 ## Method Overview
 
-```mermaid
-flowchart LR
-  A["Multi-camera RGB frames"] --> B["High-resolution 2D detectors"]
-  B --> C["Weighted detector fusion"]
-  C --> D["Calibration-guided 3D lifting"]
-  D --> E["Reliability-guided multi-view fusion"]
-  E --> F["Class-conditioned online tracker"]
-  F --> G["Conservative BEV tracklet relinking"]
-  G --> H["track1.txt"]
-```
+<p align="center">
+  <a href="Star-3D.pdf">
+    <img src="docs/assets/star-3d-preview.png" alt="STAR-3D teaser" width="900">
+  </a>
+</p>
 
 The submission format is one whitespace-delimited text file:
 
@@ -269,13 +264,8 @@ The final ECCV AI City workshop paper and companion copies are included here:
 - [`Star-3D.pdf`](Star-3D.pdf)
 - [`track1.pdf`](track1.pdf)
 
-Click each preview to open the corresponding PDF.
-
-<p align="center">
-  <a href="Star-3D.pdf">
-    <img src="docs/assets/star-3d-preview.png" alt="STAR-3D paper preview" width="780">
-  </a>
-</p>
+Click the preview below to open the Track 1 PDF. The STAR-3D teaser is shown in
+the method overview above.
 
 <p align="center">
   <a href="track1.pdf">
